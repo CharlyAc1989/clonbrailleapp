@@ -19,12 +19,10 @@
  * This monolithic file remains the active entry point until full migration.
  * Games use dependency injection for testability - see src/games/ for examples.
  */
-
-// Import Vercel Speed Insights (will be bundled by Vite)
-import { injectSpeedInsights } from "@vercel/speed-insights";
+// Games and utilities (using dynamic imports for GitHub Pages compatibility)
+// Note: @vercel/speed-insights removed - not compatible with static hosting
 import { createGuessLetterGame, createFormWordGame, createMemoryGame } from './src/games/index.js';
 import { migrateProgress } from "./src/lib/stateMigration.js";
-injectSpeedInsights();
 
 
 (function () {
