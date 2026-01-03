@@ -2199,20 +2199,8 @@ function createMemoryGame(dependencies) {
         // Stop any active typewriter animation
         TypewriterController.stop();
 
-        // AUTH GUARD: Prevent unauthorized access to protected screens
-        const protectedScreens = ['dashboard-screen', 'profile-screen', 'levels-screen', 'games-screen', 'practice-screen', 'progress-screen', 'settings-screen'];
-        if (protectedScreens.includes(screenId)) {
-            // Allow if authenticated OR if it's the specific onboarding screen flow
-            // But strictly block navigation if not logged in
-            if (!state.session.isAuthenticated && !state.profile.supabaseUserId) {
-                // Exception: Guest mode (if implemented later) - for now, strict block
-                // Only redirect if NOT already on welcome or auth
-                if (screenId !== 'welcome-screen' && screenId !== 'auth-screen') {
-                    console.warn(`🛑 Blocked navigation to ${screenId} - User not authenticated`);
-                    screenId = 'welcome-screen'; // Override destination
-                }
-            }
-        }
+        // AUTH GUARD REMOVED: Allow access to all screens without authentication
+        // (Previously blocked: dashboard-screen, profile-screen, levels-screen, games-screen, practice-screen, progress-screen, settings-screen)
 
         // Defensive cleanup: explicitly hide ALL screens
         document.querySelectorAll('.screen').forEach(screen => {
