@@ -3624,8 +3624,8 @@ function createMemoryGame(dependencies) {
             console.log('✅ welcome-start-btn found');
             welcomeStartBtn.addEventListener('click', () => {
                 console.log('🚀 Start button clicked');
-                // Navigate to account choice screen (auth screen)
-                navigateTo('auth-screen');
+                // Skip authentication - go directly to dashboard
+                navigateTo('dashboard-screen');
             });
         }
 
