@@ -19,10 +19,839 @@
  * This monolithic file remains the active entry point until full migration.
  * Games use dependency injection for testability - see src/games/ for examples.
  */
-// Games and utilities (using dynamic imports for GitHub Pages compatibility)
-// Note: @vercel/speed-insights removed - not compatible with static hosting
-import { createGuessLetterGame, createFormWordGame, createMemoryGame } from './src/games/index.js';
-import { migrateProgress } from "./src/lib/stateMigration.js";
+// ================================
+// INLINED MODULES (GitHub Pages compatibility)
+// These were moved from src/ because GitHub Pages cannot serve that folder
+// ================================
+
+// State migration helper (from src/lib/stateMigration.js)
+function migrateProgress(parsedProgress = {}, defaultProgress = {}) {
+    const mergedProgress = { ...defaultProgress, ...parsedProgress };
+    let migrated = false;
+
+    if (Array.isArray(parsedProgress?.completedLevels)) {
+        const currentLevels = Array.isArray(mergedProgress.levelsCompleted)
+            ? mergedProgress.levelsCompleted
+            : [];
+        const mergedLevels = Array.from(new Set([...currentLevels, ...parsedProgress.completedLevels]));
+        if (mergedLevels.length !== currentLevels.length) {
+            mergedProgress.levelsCompleted = mergedLevels;
+        }
+        migrated = true;
+    }
+
+    if (typeof parsedProgress?.xp === 'number' && !Number.isNaN(parsedProgress.xp)) {
+        mergedProgress.totalXP = (mergedProgress.totalXP || 0) + parsedProgress.xp;
+        migrated = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mergedProgress, 'xp')) {
+        delete mergedProgress.xp;
+        migrated = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(mergedProgress, 'completedLevels')) {
+        delete mergedProgress.completedLevels;
+        migrated = true;
+    }
+
+    return { progress: mergedProgress, migrated };
+}
+
+// Guess Letter Game (from src/games/GuessLetterGame.js)
+function createGuessLetterGame(dependencies) {
+    const { BrailleData, HapticService, AudioService, state, saveState, navigateTo } = dependencies;
+
+    return {
+        currentRound: 0,
+        totalRounds: 10,
+        score: 0,
+        lives: 3,
+        correctAnswers: 0,
+        currentLetter: null,
+        letters: [],
+        answered: false,
+
+        init() {
+            this.setupEventListeners();
+        },
+
+        setupEventListeners() {
+            const playBtn = document.getElementById('play-guess-letter');
+            if (playBtn) {
+                playBtn.addEventListener('click', () => this.startGame());
+            }
+
+            const backBtn = document.getElementById('guess-letter-back-btn');
+            if (backBtn) {
+                backBtn.addEventListener('click', () => this.exitGame());
+            }
+
+            const nextBtn = document.getElementById('guess-letter-next');
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => this.nextRound());
+            }
+
+            const optionsContainer = document.getElementById('guess-letter-options');
+            if (optionsContainer) {
+                optionsContainer.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.game-answer-btn');
+                    if (btn && !this.answered) {
+                        this.checkAnswer(btn.dataset.letter);
+                    }
+                });
+            }
+
+            const playAgainBtn = document.getElementById('game-over-play-again');
+            if (playAgainBtn) {
+                playAgainBtn.addEventListener('click', () => this.startGame());
+            }
+
+            const backToGamesBtn = document.getElementById('game-over-back');
+            if (backToGamesBtn) {
+                backToGamesBtn.addEventListener('click', () => {
+                    navigateTo('games-screen');
+                });
+            }
+
+            const gamesBackBtn = document.getElementById('games-back-btn');
+            if (gamesBackBtn) {
+                gamesBackBtn.addEventListener('click', () => {
+                    navigateTo('dashboard-screen');
+                });
+            }
+        },
+
+        startGame() {
+            this.currentRound = 0;
+            this.score = 0;
+            this.lives = 3;
+            this.correctAnswers = 0;
+            this.answered = false;
+
+            const learnedLetters = this.getLearnedLetters();
+            this.letters = learnedLetters.length >= 4
+                ? learnedLetters
+                : ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+
+            this.updateScoreDisplay();
+            this.updateLivesDisplay();
+            document.getElementById('guess-letter-total').textContent = this.totalRounds;
+
+            navigateTo('guess-letter-screen');
+            this.nextRound();
+        },
+
+        getLearnedLetters() {
+            const completedLevelIds = state.progress?.levelsCompleted || [];
+            const learnedLetters = new Set();
+
+            completedLevelIds.forEach(levelId => {
+                const level = BrailleData.LEVELS.find(l => l.id === levelId);
+                if (level && level.letters) {
+                    level.letters.forEach(letter => {
+                        if (typeof letter === 'string' && /^[a-z]$/i.test(letter)) {
+                            learnedLetters.add(letter.toLowerCase());
+                        }
+                    });
+                }
+            });
+
+            return Array.from(learnedLetters);
+        },
+
+        nextRound() {
+            this.currentRound++;
+            this.answered = false;
+
+            if (this.currentRound > this.totalRounds || this.lives <= 0) {
+                this.endGame();
+                return;
+            }
+
+            document.getElementById('guess-letter-round').textContent = this.currentRound;
+
+            document.getElementById('guess-letter-footer')?.classList.add('hidden');
+            const feedback = document.getElementById('guess-letter-feedback');
+            if (feedback) {
+                feedback.classList.add('hidden');
+                feedback.classList.remove('correct', 'incorrect');
+            }
+
+            const buttons = document.querySelectorAll('.game-answer-btn');
+            buttons.forEach(btn => {
+                btn.classList.remove('correct', 'incorrect');
+                btn.disabled = false;
+            });
+
+            this.currentLetter = this.letters[Math.floor(Math.random() * this.letters.length)];
+            this.displayBraillePattern(this.currentLetter);
+            this.displayOptions();
+        },
+
+        displayBraillePattern(letter) {
+            const dots = BrailleData.BRAILLE_ALPHABET[letter.toLowerCase()];
+            const cellDots = document.querySelectorAll('#guess-braille-cell .game-braille-dot');
+
+            cellDots.forEach(dot => {
+                const dotNum = parseInt(dot.dataset.dot);
+                if (dots && dots.includes(dotNum)) {
+                    dot.classList.add('active');
+                } else {
+                    dot.classList.remove('active');
+                }
+            });
+        },
+
+        displayOptions() {
+            const optionsContainer = document.getElementById('guess-letter-options');
+            if (!optionsContainer) return;
+
+            const distractors = BrailleData.generateDistractors(this.currentLetter, 3, this.letters);
+            const options = [this.currentLetter, ...distractors];
+            this.shuffleArray(options);
+
+            const buttons = optionsContainer.querySelectorAll('.game-answer-btn');
+            buttons.forEach((btn, index) => {
+                btn.textContent = options[index].toUpperCase();
+                btn.dataset.letter = options[index].toLowerCase();
+            });
+        },
+
+        shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        },
+
+        checkAnswer(selectedLetter) {
+            if (this.answered) return;
+            this.answered = true;
+
+            const isCorrect = selectedLetter.toLowerCase() === this.currentLetter.toLowerCase();
+            const buttons = document.querySelectorAll('.game-answer-btn');
+            const feedback = document.getElementById('guess-letter-feedback');
+            const feedbackIcon = feedback?.querySelector('.game-feedback-icon');
+            const feedbackText = feedback?.querySelector('.game-feedback-text');
+
+            buttons.forEach(btn => btn.disabled = true);
+
+            buttons.forEach(btn => {
+                if (btn.dataset.letter === selectedLetter.toLowerCase()) {
+                    btn.classList.add(isCorrect ? 'correct' : 'incorrect');
+                }
+                if (btn.dataset.letter === this.currentLetter.toLowerCase()) {
+                    btn.classList.add('correct');
+                }
+            });
+
+            if (isCorrect) {
+                this.score += 10;
+                this.correctAnswers++;
+                HapticService.success();
+                AudioService.playSound('correct');
+
+                if (feedback) {
+                    feedback.classList.remove('hidden', 'incorrect');
+                    feedback.classList.add('correct');
+                    if (feedbackIcon) feedbackIcon.textContent = '✓';
+                    if (feedbackText) feedbackText.textContent = '¡Correcto!';
+                }
+            } else {
+                this.lives--;
+                HapticService.error();
+                AudioService.playSound('incorrect');
+
+                if (feedback) {
+                    feedback.classList.remove('hidden', 'correct');
+                    feedback.classList.add('incorrect');
+                    if (feedbackIcon) feedbackIcon.textContent = '✗';
+                    if (feedbackText) feedbackText.textContent = `Era la letra ${this.currentLetter.toUpperCase()}`;
+                }
+
+                this.updateLivesDisplay();
+
+                if (this.lives <= 0) {
+                    setTimeout(() => this.endGame(), 1500);
+                    return;
+                }
+            }
+
+            this.updateScoreDisplay();
+            document.getElementById('guess-letter-footer')?.classList.remove('hidden');
+        },
+
+        updateScoreDisplay() {
+            const scoreEl = document.getElementById('guess-letter-score');
+            if (scoreEl) scoreEl.textContent = this.score;
+        },
+
+        updateLivesDisplay() {
+            const livesEl = document.getElementById('guess-letter-lives');
+            if (livesEl) {
+                livesEl.textContent = '❤️'.repeat(this.lives) + '🖤'.repeat(Math.max(0, 3 - this.lives));
+            }
+        },
+
+        exitGame() {
+            navigateTo('games-screen');
+        },
+
+        endGame() {
+            const accuracy = this.currentRound > 0
+                ? Math.round((this.correctAnswers / Math.min(this.currentRound, this.totalRounds)) * 100)
+                : 0;
+
+            const baseXP = this.score;
+            const accuracyBonus = accuracy >= 80 ? 20 : (accuracy >= 60 ? 10 : 0);
+            const completionBonus = this.lives > 0 ? 30 : 0;
+            const totalXP = baseXP + accuracyBonus + completionBonus;
+
+            state.progress.totalXP = (state.progress.totalXP || 0) + totalXP;
+            saveState();
+
+            let icon, title, subtitle;
+            if (this.lives <= 0) {
+                icon = '😢';
+                title = '¡Se acabaron las vidas!';
+                subtitle = 'Sigue practicando';
+            } else if (accuracy >= 80) {
+                icon = '🎉';
+                title = '¡Excelente!';
+                subtitle = '¡Eres un experto!';
+            } else if (accuracy >= 60) {
+                icon = '👍';
+                title = '¡Bien hecho!';
+                subtitle = 'Sigue mejorando';
+            } else {
+                icon = '💪';
+                title = '¡Buen intento!';
+                subtitle = 'Practica más para mejorar';
+            }
+
+            document.getElementById('game-over-icon').textContent = icon;
+            document.getElementById('game-over-title').textContent = title;
+            document.getElementById('game-over-subtitle').textContent = subtitle;
+            document.getElementById('game-over-score').textContent = this.score;
+            document.getElementById('game-over-correct').textContent = this.correctAnswers;
+            document.getElementById('game-over-accuracy').textContent = accuracy + '%';
+            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
+
+            navigateTo('game-over-screen');
+        }
+    };
+}
+
+// Form Word Game (from src/games/FormWordGame.js)
+function createFormWordGame(dependencies) {
+    const { BrailleData, HapticService, AudioService, state, saveState, navigateTo } = dependencies;
+
+    return {
+        currentRound: 0,
+        totalRounds: 5,
+        score: 0,
+        lives: 3,
+        correctAnswers: 0,
+        currentWord: null,
+        words: ['sol', 'mar', 'pan', 'luz', 'rio', 'dia', 'mes', 'ojo', 'pie', 'fin'],
+        selectedLetters: [],
+        answered: false,
+
+        init() {
+            this.setupEventListeners();
+        },
+
+        setupEventListeners() {
+            const playBtn = document.getElementById('play-form-word');
+            if (playBtn) {
+                playBtn.addEventListener('click', () => this.startGame());
+            }
+
+            const backBtn = document.getElementById('form-word-back-btn');
+            if (backBtn) {
+                backBtn.addEventListener('click', () => this.exitGame());
+            }
+
+            const checkBtn = document.getElementById('form-word-check');
+            if (checkBtn) {
+                checkBtn.addEventListener('click', () => this.checkAnswer());
+            }
+
+            const nextBtn = document.getElementById('form-word-next');
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => this.nextRound());
+            }
+        },
+
+        startGame() {
+            this.currentRound = 0;
+            this.score = 0;
+            this.lives = 3;
+            this.correctAnswers = 0;
+            this.answered = false;
+
+            this.shuffleArray(this.words);
+            this.updateScoreDisplay();
+            this.updateLivesDisplay();
+            document.getElementById('form-word-total').textContent = this.totalRounds;
+
+            navigateTo('form-word-screen');
+            this.nextRound();
+        },
+
+        shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        },
+
+        nextRound() {
+            this.currentRound++;
+            this.selectedLetters = [];
+            this.answered = false;
+
+            if (this.currentRound > this.totalRounds || this.lives <= 0) {
+                this.endGame();
+                return;
+            }
+
+            document.getElementById('form-word-round').textContent = this.currentRound;
+            document.getElementById('form-word-check').disabled = true;
+            document.getElementById('form-word-check').classList.remove('hidden');
+            document.getElementById('form-word-next').classList.add('hidden');
+
+            const feedback = document.getElementById('form-word-feedback');
+            if (feedback) {
+                feedback.classList.add('hidden');
+                feedback.classList.remove('correct', 'incorrect');
+            }
+
+            this.currentWord = this.words[(this.currentRound - 1) % this.words.length];
+            document.getElementById('form-word-target').textContent = this.currentWord.toUpperCase();
+
+            this.createSlots();
+            this.createOptions();
+        },
+
+        createSlots() {
+            const slotsContainer = document.getElementById('form-word-slots');
+            slotsContainer.innerHTML = '';
+
+            for (let i = 0; i < this.currentWord.length; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'form-word-slot';
+                slot.dataset.index = i;
+                slot.innerHTML = `<span class="form-word-slot-letter">${i + 1}</span>`;
+                slot.addEventListener('click', () => this.removeFromSlot(i));
+                slotsContainer.appendChild(slot);
+            }
+        },
+
+        createOptions() {
+            const optionsContainer = document.getElementById('form-word-options');
+            optionsContainer.innerHTML = '';
+
+            const letters = this.currentWord.split('');
+            this.shuffleArray(letters);
+
+            letters.forEach((letter, index) => {
+                const option = document.createElement('div');
+                option.className = 'form-word-option';
+                option.dataset.letter = letter;
+                option.dataset.originalIndex = index;
+
+                const dots = BrailleData.BRAILLE_ALPHABET[letter.toLowerCase()] || [];
+                const dotsHtml = [1, 4, 2, 5, 3, 6].map(dotNum =>
+                    `<div class="form-word-option-dot ${dots.includes(dotNum) ? 'active' : ''}" data-dot="${dotNum}"></div>`
+                ).join('');
+
+                option.innerHTML = `
+                    <div class="form-word-option-cell">${dotsHtml}</div>
+                    <span class="form-word-option-label">${letter.toUpperCase()}</span>
+                `;
+                option.addEventListener('click', () => this.selectLetter(option, letter));
+                optionsContainer.appendChild(option);
+            });
+        },
+
+        selectLetter(optionEl, letter) {
+            if (optionEl.classList.contains('used') || this.answered) return;
+
+            const slots = document.querySelectorAll('.form-word-slot');
+            const emptySlot = Array.from(slots).find((_, i) => !this.selectedLetters[i]);
+
+            if (!emptySlot) return;
+
+            const slotIndex = parseInt(emptySlot.dataset.index);
+            this.selectedLetters[slotIndex] = { letter, optionEl };
+
+            optionEl.classList.add('used');
+            emptySlot.classList.add('filled');
+
+            const dotsHtml = optionEl.querySelector('.form-word-option-cell').outerHTML;
+            emptySlot.innerHTML = `
+                <span class="form-word-slot-letter">${slotIndex + 1}</span>
+                ${dotsHtml}
+            `;
+
+            const allFilled = this.selectedLetters.filter(Boolean).length === this.currentWord.length;
+            document.getElementById('form-word-check').disabled = !allFilled;
+        },
+
+        removeFromSlot(slotIndex) {
+            if (this.answered) return;
+            const slotData = this.selectedLetters[slotIndex];
+            if (!slotData) return;
+
+            slotData.optionEl.classList.remove('used');
+
+            const slot = document.querySelector(`.form-word-slot[data-index="${slotIndex}"]`);
+            slot.classList.remove('filled');
+            slot.innerHTML = `<span class="form-word-slot-letter">${slotIndex + 1}</span>`;
+
+            this.selectedLetters[slotIndex] = null;
+            document.getElementById('form-word-check').disabled = true;
+        },
+
+        checkAnswer() {
+            this.answered = true;
+            const userWord = this.selectedLetters.map(s => s.letter).join('');
+            const isCorrect = userWord === this.currentWord;
+
+            const slots = document.querySelectorAll('.form-word-slot');
+            const feedback = document.getElementById('form-word-feedback');
+            const feedbackIcon = feedback?.querySelector('.game-feedback-icon');
+            const feedbackText = feedback?.querySelector('.game-feedback-text');
+
+            slots.forEach((slot, i) => {
+                if (this.selectedLetters[i]?.letter === this.currentWord[i]) {
+                    slot.classList.add('correct');
+                } else {
+                    slot.classList.add('incorrect');
+                }
+            });
+
+            if (isCorrect) {
+                this.score += 20;
+                this.correctAnswers++;
+                HapticService.success();
+                AudioService.playSound('correct');
+
+                if (feedback) {
+                    feedback.classList.remove('hidden', 'incorrect');
+                    feedback.classList.add('correct');
+                    if (feedbackIcon) feedbackIcon.textContent = '✓';
+                    if (feedbackText) feedbackText.textContent = '¡Excelente!';
+                }
+            } else {
+                this.lives--;
+                HapticService.error();
+                AudioService.playSound('incorrect');
+
+                if (feedback) {
+                    feedback.classList.remove('hidden', 'correct');
+                    feedback.classList.add('incorrect');
+                    if (feedbackIcon) feedbackIcon.textContent = '✗';
+                    if (feedbackText) feedbackText.textContent = 'Inténtalo de nuevo';
+                }
+
+                this.updateLivesDisplay();
+
+                if (this.lives <= 0) {
+                    setTimeout(() => this.endGame(), 1500);
+                    return;
+                }
+            }
+
+            this.updateScoreDisplay();
+            document.getElementById('form-word-check').classList.add('hidden');
+            document.getElementById('form-word-next').classList.remove('hidden');
+        },
+
+        updateScoreDisplay() {
+            document.getElementById('form-word-score').textContent = this.score;
+        },
+
+        updateLivesDisplay() {
+            const livesEl = document.getElementById('form-word-lives');
+            if (livesEl) {
+                livesEl.textContent = '❤️'.repeat(this.lives) + '🖤'.repeat(Math.max(0, 3 - this.lives));
+            }
+        },
+
+        exitGame() {
+            navigateTo('games-screen');
+        },
+
+        endGame() {
+            const accuracy = this.currentRound > 0
+                ? Math.round((this.correctAnswers / Math.min(this.currentRound, this.totalRounds)) * 100)
+                : 0;
+
+            const baseXP = this.score;
+            const accuracyBonus = accuracy >= 80 ? 30 : (accuracy >= 60 ? 15 : 0);
+            const completionBonus = this.lives > 0 ? 40 : 0;
+            const totalXP = baseXP + accuracyBonus + completionBonus;
+
+            state.progress.totalXP = (state.progress.totalXP || 0) + totalXP;
+            saveState();
+
+            let icon, title, subtitle;
+            if (this.lives <= 0) {
+                icon = '😢';
+                title = '¡Se acabaron las vidas!';
+                subtitle = 'Sigue practicando';
+            } else if (accuracy >= 80) {
+                icon = '🎉';
+                title = '¡Excelente!';
+                subtitle = '¡Dominas las palabras!';
+            } else if (accuracy >= 60) {
+                icon = '👍';
+                title = '¡Bien hecho!';
+                subtitle = 'Sigue mejorando';
+            } else {
+                icon = '💪';
+                title = '¡Buen intento!';
+                subtitle = 'Practica más para mejorar';
+            }
+
+            document.getElementById('game-over-icon').textContent = icon;
+            document.getElementById('game-over-title').textContent = title;
+            document.getElementById('game-over-subtitle').textContent = subtitle;
+            document.getElementById('game-over-score').textContent = this.score;
+            document.getElementById('game-over-correct').textContent = this.correctAnswers;
+            document.getElementById('game-over-accuracy').textContent = accuracy + '%';
+            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
+
+            navigateTo('game-over-screen');
+        }
+    };
+}
+
+// Memory Game (from src/games/MemoryGame.js)
+function createMemoryGame(dependencies) {
+    const { BrailleData, HapticService, AudioService, state, saveState, navigateTo } = dependencies;
+
+    return {
+        cards: [],
+        flippedCards: [],
+        matchedPairs: 0,
+        totalPairs: 6,
+        moves: 0,
+        timer: 0,
+        timerInterval: null,
+        isProcessing: false,
+
+        init() {
+            this.setupEventListeners();
+        },
+
+        setupEventListeners() {
+            const playBtn = document.getElementById('play-memory');
+            if (playBtn) {
+                playBtn.addEventListener('click', () => this.startGame());
+            }
+
+            const backBtn = document.getElementById('memory-back-btn');
+            if (backBtn) {
+                backBtn.addEventListener('click', () => this.exitGame());
+            }
+        },
+
+        startGame() {
+            this.matchedPairs = 0;
+            this.moves = 0;
+            this.timer = 0;
+            this.flippedCards = [];
+            this.isProcessing = false;
+
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+            }
+
+            this.updateUI();
+            navigateTo('memory-screen');
+            this.createCards();
+            this.startTimer();
+        },
+
+        startTimer() {
+            this.timerInterval = setInterval(() => {
+                this.timer++;
+                const minutes = Math.floor(this.timer / 60);
+                const seconds = this.timer % 60;
+                document.getElementById('memory-timer').textContent =
+                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }, 1000);
+        },
+
+        createCards() {
+            const grid = document.getElementById('memory-grid');
+            grid.innerHTML = '';
+
+            const allLetters = Object.keys(BrailleData.BRAILLE_ALPHABET);
+            const selectedLetters = this.shuffleArray([...allLetters]).slice(0, this.totalPairs);
+
+            this.cards = [];
+            selectedLetters.forEach((letter, i) => {
+                this.cards.push({ type: 'letter', value: letter, pairId: i });
+                this.cards.push({ type: 'braille', value: letter, pairId: i });
+            });
+
+            this.shuffleArray(this.cards);
+
+            this.cards.forEach((card, index) => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'memory-card';
+                cardEl.dataset.index = index;
+
+                let backContent;
+                if (card.type === 'letter') {
+                    backContent = `<div class="memory-card-back letter">${card.value.toUpperCase()}</div>`;
+                } else {
+                    const dots = BrailleData.BRAILLE_ALPHABET[card.value] || [];
+                    const dotsHtml = [1, 4, 2, 5, 3, 6].map(dotNum =>
+                        `<div class="memory-braille-dot ${dots.includes(dotNum) ? 'active' : ''}"></div>`
+                    ).join('');
+                    backContent = `<div class="memory-card-back braille"><div class="memory-braille-cell">${dotsHtml}</div></div>`;
+                }
+
+                cardEl.innerHTML = `
+                    <div class="memory-card-inner">
+                        <div class="memory-card-front">
+                            <span class="material-symbols-outlined">question_mark</span>
+                        </div>
+                        ${backContent}
+                    </div>
+                `;
+
+                cardEl.addEventListener('click', () => this.flipCard(index));
+                grid.appendChild(cardEl);
+            });
+        },
+
+        shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        },
+
+        flipCard(index) {
+            if (this.isProcessing) return;
+
+            const cardEl = document.querySelectorAll('.memory-card')[index];
+            const card = this.cards[index];
+
+            if (cardEl.classList.contains('flipped') || cardEl.classList.contains('matched')) return;
+            if (this.flippedCards.length >= 2) return;
+
+            cardEl.classList.add('flipped');
+            this.flippedCards.push({ index, card, element: cardEl });
+            HapticService.tap();
+
+            if (this.flippedCards.length === 2) {
+                this.moves++;
+                document.getElementById('memory-moves').textContent = this.moves;
+                this.checkMatch();
+            }
+        },
+
+        checkMatch() {
+            this.isProcessing = true;
+            const [first, second] = this.flippedCards;
+
+            const isMatch = first.card.pairId === second.card.pairId && first.card.type !== second.card.type;
+
+            setTimeout(() => {
+                if (isMatch) {
+                    first.element.classList.add('matched');
+                    second.element.classList.add('matched');
+                    this.matchedPairs++;
+                    document.getElementById('memory-pairs').textContent = this.matchedPairs;
+                    HapticService.success();
+                    AudioService.playSound('correct');
+
+                    if (this.matchedPairs === this.totalPairs) {
+                        setTimeout(() => this.endGame(), 500);
+                    }
+                } else {
+                    first.element.classList.remove('flipped');
+                    second.element.classList.remove('flipped');
+                    HapticService.error();
+                }
+
+                this.flippedCards = [];
+                this.isProcessing = false;
+            }, isMatch ? 500 : 1000);
+        },
+
+        updateUI() {
+            document.getElementById('memory-pairs').textContent = '0';
+            document.getElementById('memory-total-pairs').textContent = this.totalPairs;
+            document.getElementById('memory-moves').textContent = '0';
+            document.getElementById('memory-timer').textContent = '0:00';
+        },
+
+        exitGame() {
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+            }
+            navigateTo('games-screen');
+        },
+
+        endGame() {
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+            }
+
+            const moveScore = Math.max(0, 100 - (this.moves - this.totalPairs) * 5);
+            const timeScore = Math.max(0, 100 - this.timer);
+            const totalScore = Math.round((moveScore + timeScore) / 2);
+
+            const baseXP = 50;
+            const moveBonus = this.moves <= this.totalPairs + 4 ? 30 : (this.moves <= this.totalPairs + 8 ? 15 : 0);
+            const timeBonus = this.timer <= 60 ? 30 : (this.timer <= 120 ? 15 : 0);
+            const totalXP = baseXP + moveBonus + timeBonus;
+
+            state.progress.totalXP = (state.progress.totalXP || 0) + totalXP;
+            saveState();
+
+            let icon, title, subtitle;
+            if (this.moves <= this.totalPairs + 2) {
+                icon = '🧠';
+                title = '¡Memoria perfecta!';
+                subtitle = 'Increíble concentración';
+            } else if (this.moves <= this.totalPairs + 6) {
+                icon = '🎉';
+                title = '¡Excelente!';
+                subtitle = 'Gran memoria';
+            } else {
+                icon = '👍';
+                title = '¡Completado!';
+                subtitle = 'Sigue practicando';
+            }
+
+            document.getElementById('game-over-icon').textContent = icon;
+            document.getElementById('game-over-title').textContent = title;
+            document.getElementById('game-over-subtitle').textContent = subtitle;
+            document.getElementById('game-over-score').textContent = totalScore;
+            document.getElementById('game-over-correct').textContent = this.matchedPairs;
+            document.getElementById('game-over-accuracy').textContent = `${this.moves} mov.`;
+            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
+
+            navigateTo('game-over-screen');
+        }
+    };
+}
+
+// ================================
+// END INLINED MODULES
+// ================================
 
 
 (function () {
