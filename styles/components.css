@@ -1,0 +1,260 @@
+/* ================================
+   COMPONENT STYLES
+   Buttons, cards, toggles, form elements
+   ================================ */
+
+/* ================================
+   Buttons
+   ================================ */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: 0 var(--space-xl);
+    height: 56px;
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #0E1B13;
+    background: var(--color-accent-primary);
+    border: none;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    min-width: 140px;
+    position: relative;
+    box-shadow: 0 4px 12px rgba(255, 144, 69, 0.4);
+    margin-bottom: var(--space-xs);
+    user-select: none;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    background: var(--color-accent-primary-hover);
+    box-shadow: 0 8px 16px rgba(255, 144, 69, 0.5);
+}
+
+.btn:active {
+    transform: translateY(1px);
+    box-shadow: 0 2px 8px rgba(255, 144, 69, 0.3);
+}
+
+.btn-primary {
+    background: var(--color-accent-primary);
+    color: #0E1B13;
+}
+
+.btn-secondary {
+    background: #FFFFFF;
+    color: var(--color-text-primary);
+    border: 2px solid rgba(14, 27, 19, 0.1);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn-secondary:hover {
+    background: #F8FAF9;
+    border-color: rgba(14, 27, 19, 0.2);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-large {
+    height: 64px;
+    font-size: var(--font-size-lg);
+    padding: 0 var(--space-2xl);
+    width: 100%;
+}
+
+/* Icon Button (Round) */
+.icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    background: white;
+    border: 1px solid rgba(14, 27, 19, 0.1);
+    border-radius: 50%;
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    box-shadow: var(--shadow-sm);
+}
+
+.icon-btn:hover {
+    background: var(--color-bg-elevated);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.icon-btn:active {
+    transform: translateY(0);
+}
+
+.icon-btn svg {
+    width: 24px;
+    height: 24px;
+}
+
+.text-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    padding: var(--space-sm);
+    cursor: pointer;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.text-btn:hover {
+    color: var(--color-text-primary);
+    text-decoration: underline;
+}
+
+/* ================================
+   Toggle Switch
+   ================================ */
+
+.toggle-switch {
+    position: relative;
+    width: 52px;
+    height: 28px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+}
+
+.toggle-track {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: var(--color-dot-unraised);
+    border-radius: var(--radius-full);
+    position: relative;
+    transition: background var(--transition-fast);
+}
+
+.toggle-thumb {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 24px;
+    height: 24px;
+    background: white;
+    border-radius: 50%;
+    transition: transform var(--transition-fast);
+    box-shadow: var(--shadow-sm);
+}
+
+.toggle-switch[aria-checked="true"] .toggle-track {
+    background: var(--color-accent-primary);
+}
+
+.toggle-switch[aria-checked="true"] .toggle-thumb {
+    transform: translateX(24px);
+}
+
+/* ================================
+   Card Styles
+   ================================ */
+
+.card {
+    background: var(--color-bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    box-shadow: var(--shadow-md);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+/* ================================
+   Form Elements
+   ================================ */
+
+.form-group {
+    margin-bottom: var(--space-lg);
+}
+
+.form-label {
+    display: block;
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-sm);
+}
+
+.form-input {
+    width: 100%;
+    padding: var(--space-md);
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    border: 2px solid var(--color-dot-unraised);
+    border-radius: var(--radius-md);
+    background: white;
+    color: var(--color-text-primary);
+    transition: border-color var(--transition-fast);
+}
+
+.form-input:focus {
+    border-color: var(--color-accent-primary);
+    outline: none;
+}
+
+.form-input::placeholder {
+    color: var(--color-text-muted);
+}
+
+.form-hint {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-top: var(--space-xs);
+}
+
+/* ================================
+   Progress Bar
+   ================================ */
+
+.progress-track {
+    width: 100%;
+    height: 8px;
+    background: var(--color-dot-unraised);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--gradient-primary);
+    border-radius: var(--radius-full);
+    transition: width var(--transition-base);
+}
+
+/* ================================
+   Badge / Pill
+   ================================ */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    border-radius: var(--radius-full);
+    background: var(--color-accent-tertiary);
+    color: var(--color-accent-primary);
+}
+
+/* ================================
+   Hidden Utility
+   ================================ */
+
+.hidden {
+    display: none !important;
+}
