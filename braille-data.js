@@ -145,6 +145,7 @@ const LEVELS = [
             'Conocer los puntos derechos: 4, 5, 6'
         ],
         letters: [],
+        dots: [1, 2, 3, 4, 5, 6],
         gameType: 'observe',
         rounds: 1,
         isPremium: false
@@ -154,15 +155,16 @@ const LEVELS = [
         chapter: 0,
         number: 2,
         title: 'Puntos Izquierdos',
-        description: 'Practica identificando los puntos 1, 2 y 3 del lado izquierdo de la celda.',
+        description: 'Los puntos 1, 2 y 3 están en el lado izquierdo de la celda. El punto 1 arriba, el 2 en el centro, y el 3 abajo.',
         objectives: [
             'Identificar el punto 1 (arriba izquierda)',
             'Identificar el punto 2 (centro izquierda)',
             'Identificar el punto 3 (abajo izquierda)'
         ],
         letters: [],
-        gameType: 'build',
-        rounds: 6,
+        dots: [1, 2, 3],
+        gameType: 'observe',
+        rounds: 1,
         isPremium: false
     },
     {
@@ -170,15 +172,16 @@ const LEVELS = [
         chapter: 0,
         number: 3,
         title: 'Puntos Derechos',
-        description: 'Practica identificando los puntos 4, 5 y 6 del lado derecho de la celda.',
+        description: 'Los puntos 4, 5 y 6 están en el lado derecho de la celda. El punto 4 arriba, el 5 en el centro, y el 6 abajo.',
         objectives: [
             'Identificar el punto 4 (arriba derecha)',
             'Identificar el punto 5 (centro derecha)',
             'Identificar el punto 6 (abajo derecha)'
         ],
         letters: [],
-        gameType: 'build',
-        rounds: 6,
+        dots: [4, 5, 6],
+        gameType: 'observe',
+        rounds: 1,
         isPremium: false
     },
 

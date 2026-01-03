@@ -2578,20 +2578,53 @@ function createMemoryGame(dependencies) {
                     AudioService.speak(`¿Qué celda es: ${question.char}?`);
                 }
             } else if (type === 'observe') {
-                // OBSERVE: Show the level description and complete
-                // Use instruction screen approach - show info then advance
+                // OBSERVE: Show dots animation based on level.dots
                 navigateTo('instruction-screen');
 
-                const instructionText = document.getElementById('instruction-text');
-                if (instructionText) {
-                    instructionText.textContent = question.content || this.currentLevel.description;
+                const level = this.currentLevel;
+                const dotsToShow = level.dots || [];
+
+                // Update instruction screen content
+                const letterEl = document.getElementById('instruction-letter');
+                const textEl = document.getElementById('instruction-text');
+                const puppyMsg = document.getElementById('instruction-puppy-message');
+
+                if (letterEl) letterEl.textContent = level.title;
+                if (textEl) textEl.textContent = level.description;
+                if (puppyMsg) {
+                    puppyMsg.innerHTML = level.description;
                 }
 
-                // Auto-complete observe levels after showing content
-                setTimeout(() => {
-                    this.correctAnswers = 1;
-                    this.endGame();
-                }, 3000);
+                // Reset all dots first
+                document.querySelectorAll('#instruction-cell .braille-lesson-dot').forEach(dot => {
+                    dot.classList.remove('filled', 'active', 'animating');
+                });
+
+                // Animate dots sequentially
+                dotsToShow.forEach((dotNum, index) => {
+                    setTimeout(() => {
+                        const dotEl = document.querySelector(`#instruction-cell .braille-lesson-dot[data-dot="${dotNum}"]`);
+                        if (dotEl) {
+                            dotEl.classList.add('filled', 'animating');
+                            // Speak dot position
+                            const position = BrailleData.DOT_POSITIONS[dotNum];
+                            AudioService.speak(`Punto ${dotNum}, ${position}`);
+                        }
+                    }, index * 800);
+                });
+
+                // Show next button after all dots are shown
+                const nextBtn = document.getElementById('instruction-next-btn');
+                if (nextBtn) {
+                    nextBtn.style.display = 'block';
+                    nextBtn.onclick = () => {
+                        this.correctAnswers = 1;
+                        this.endGame();
+                    };
+                }
+
+                // Update progress
+                document.getElementById('lesson-progress-bar').style.width = `${progress}%`;
             } else if (type === 'words') {
                 // WORDS: Build words letter by letter using build screen
                 navigateTo('game-build-screen');
