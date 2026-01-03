@@ -19,7 +19,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Braillito">
-    <link rel="apple-touch-icon" href="/public/icon-192.png">
+    <link rel="apple-touch-icon" href="/public/mascot.svg">
 </head>
 
 <body>
@@ -136,9 +136,28 @@
     <!-- App Container -->
     <div id="app" class="app-container" role="application" aria-label="Aplicación Braillito">
 
-        <!-- Welcome Screen (New Braillito Design) -->
-        <section id="splash-screen" class="screen active welcome-screen" role="main"
-            aria-label="Bienvenida a Braillito">
+        <!-- Splash Screen (Loading Only) - Active by default -->
+        <section id="splash-screen" class="screen active" role="main" aria-label="Cargando Braillito">
+            <div class="welcome-bg-pattern"></div>
+            <div
+                style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 1rem;">
+                <div class="braillito-logo">
+                    <div class="braille-cell-mini">
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot accent"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                    </div>
+                    <h2 class="braillito-text">Braillito</h2>
+                </div>
+                <p id="splash-status" style="color: var(--color-text-muted); font-size: 0.875rem;">Cargando...</p>
+            </div>
+        </section>
+
+        <!-- Welcome Screen (Interactive) - Hidden by default -->
+        <section id="welcome-screen" class="screen welcome-screen" role="main" aria-label="Bienvenida a Braillito">
             <!-- Braille pattern background -->
             <div class="welcome-bg-pattern"></div>
             <div class="welcome-glow"></div>
@@ -181,22 +200,22 @@
                                 <!-- Antenna -->
                                 <line x1="100" y1="50" x2="100" y2="25" stroke="#112117" stroke-width="4"
                                     stroke-linecap="round" />
-                                <circle cx="100" cy="25" r="7" fill="#ff9045" />
+                                <circle class="mascot-antenna" cx="100" cy="25" r="7" fill="#ff9045" />
 
                                 <!-- Arms -->
                                 <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
                                     stroke-width="12" />
-                                <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
-                                    stroke-width="12" />
+                                <path class="mascot-arm-r" d="M 155 110 Q 170 110 165 130" stroke="white"
+                                    stroke-linecap="round" stroke-width="12" />
 
                                 <!-- Body -->
-                                <rect x="50" y="50" width="100" height="110" rx="45" fill="white" />
+                                <rect class="mascot-body" x="50" y="50" width="100" height="110" rx="45" fill="white" />
 
                                 <!-- Face -->
                                 <g transform="translate(0, 10)">
                                     <!-- Eyes -->
-                                    <ellipse cx="80" cy="80" rx="10" ry="12" fill="#112117" />
-                                    <ellipse cx="120" cy="80" rx="10" ry="12" fill="#112117" />
+                                    <ellipse class="mascot-eye" cx="80" cy="80" rx="10" ry="12" fill="#112117" />
+                                    <ellipse class="mascot-eye" cx="120" cy="80" rx="10" ry="12" fill="#112117" />
                                     <circle cx="84" cy="76" r="3" fill="white" />
                                     <circle cx="124" cy="76" r="3" fill="white" />
 
@@ -229,7 +248,7 @@
                 </div>
             </main>
 
-            <!-- Footer with CTAs -->
+            <!-- Footer with CTA -->
             <footer class="welcome-footer">
                 <button id="welcome-start-btn" class="welcome-btn primary">
                     <span>EMPEZAR</span>
@@ -237,13 +256,120 @@
                         <path d="M5 12h14M12 5l7 7-7 7" />
                     </svg>
                 </button>
-                <button id="welcome-login-btn" class="welcome-btn secondary">
-                    YA TENGO UNA CUENTA
-                </button>
             </footer>
         </section>
 
+        <!-- Auth Screen (Magic Link Login) -->
+        <section id="auth-screen" class="screen auth-screen" role="main" aria-label="Iniciar Sesión">
+            <div class="welcome-bg-pattern"></div>
+            <div class="welcome-glow"></div>
+
+            <header class="auth-header">
+                <button id="auth-back-btn" class="icon-btn back-btn" aria-label="Volver">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5M12 19l-7-7 7-7" />
+                    </svg>
+                </button>
+                <div class="braillito-logo">
+                    <div class="braille-cell-mini">
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot accent"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                    </div>
+                </div>
+                <div class="spacer"></div>
+            </header>
+
+            <main class="auth-main">
+                <!-- Email Input Step -->
+                <div id="auth-step-email" class="auth-step active">
+                    <div class="auth-icon-circle">
+                        <span class="material-symbols-outlined">rocket_launch</span>
+                    </div>
+                    <h1 class="auth-title">Comienza tu aventura</h1>
+                    <p class="auth-subtitle">Crea una cuenta para guardar tu progreso y sincronizarlo en todos tus
+                        dispositivos.</p>
+
+                    <form id="auth-form" class="auth-form">
+                        <div class="auth-input-group">
+                            <label for="auth-email" class="visually-hidden">Correo electrónico</label>
+                            <input type="email" id="auth-email" class="auth-input" placeholder="tu@correo.com" required
+                                autocomplete="email" inputmode="email">
+                        </div>
+                        <button type="submit" id="auth-submit-btn" class="welcome-btn primary">
+                            <span>Continuar con Email</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 12h14M12 5l7 7-7 7" />
+                            </svg>
+                        </button>
+                    </form>
+
+                    <!-- Divider -->
+                    <div class="auth-divider">
+                        <span>o</span>
+                    </div>
+
+                    <!-- Google Sign In -->
+                    <button id="auth-google-btn" class="auth-google-btn">
+                        <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                                fill="#4285F4" />
+                            <path
+                                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                                fill="#34A853" />
+                            <path
+                                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                                fill="#FBBC05" />
+                            <path
+                                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                                fill="#EA4335" />
+                        </svg>
+                        <span>Continuar con Google</span>
+                    </button>
+
+                    <button id="auth-guest-btn" class="auth-guest-btn">
+                        <span>Continuar sin cuenta</span>
+                        <span class="material-symbols-outlined">arrow_forward</span>
+                    </button>
+
+                    <p id="auth-error" class="auth-error hidden"></p>
+                </div>
+
+                <!-- Check Email Step -->
+                <div id="auth-step-sent" class="auth-step">
+                    <div class="auth-icon-circle success">
+                        <span class="material-symbols-outlined">mark_email_read</span>
+                    </div>
+                    <h1 class="auth-title">¡Revisa tu correo!</h1>
+                    <p class="auth-subtitle">Te enviamos un enlace mágico a <strong id="auth-sent-email"></strong>. Haz
+                        clic en el enlace para iniciar sesión.</p>
+
+                    <div class="auth-hint">
+                        <span class="material-symbols-outlined">info</span>
+                        <span>Si no lo ves, revisa tu carpeta de spam.</span>
+                    </div>
+
+                    <button id="auth-resend-btn" class="welcome-btn secondary">
+                        Reenviar enlace
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div id="auth-step-loading" class="auth-step">
+                    <div class="auth-loader">
+                        <div class="loader-spinner"></div>
+                    </div>
+                    <p class="auth-subtitle">Enviando enlace mágico...</p>
+                </div>
+            </main>
+        </section>
+
         <!-- Onboarding Screen -->
+
         <section id="onboarding-screen" class="screen" role="main" aria-label="Configuración de Accesibilidad">
             <div class="screen-content">
                 <div class="onboarding-header">
@@ -318,51 +444,131 @@
         </section>
 
         <!-- Profile Setup Screen -->
-        <section id="profile-screen" class="screen" role="main" aria-label="Crear Perfil">
-            <div class="screen-content">
-                <div class="profile-header">
-                    <h1>Crea Tu Perfil</h1>
-                    <p>Opcional - Puedes omitir este paso</p>
-                </div>
+        <section id="profile-screen" class="screen auth-screen" role="main" aria-label="Crear Perfil">
+            <div class="welcome-bg-pattern"></div>
+            <div class="welcome-glow"></div>
 
-                <form id="profile-form" class="profile-form" novalidate>
-                    <div class="form-group">
-                        <label for="profile-name" class="form-label">Tu Nombre</label>
-                        <input type="text" id="profile-name" class="form-input"
-                            placeholder="Ingresa tu nombre (opcional)" aria-describedby="name-hint">
-                        <span id="name-hint" class="form-hint">Lo usaremos para personalizar tu experiencia</span>
+            <header class="auth-header">
+                <div class="braillito-logo">
+                    <div class="braille-cell-mini">
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot accent"></span>
+                        <span class="dot filled"></span>
+                        <span class="dot filled"></span>
                     </div>
+                </div>
+            </header>
 
-                    <div class="form-group">
-                        <label class="form-label">Rango de Edad</label>
-                        <div class="age-options" role="radiogroup" aria-label="Rango de edad">
-                            <button type="button" class="age-option" role="radio" aria-checked="false" data-age="child">
-                                <span class="age-icon">👦</span>
-                                <span class="age-label">Niño</span>
-                                <span class="age-range">Menor de 12</span>
-                            </button>
-                            <button type="button" class="age-option" role="radio" aria-checked="false" data-age="teen">
-                                <span class="age-icon">🧑</span>
-                                <span class="age-label">Adolescente</span>
-                                <span class="age-range">12-17</span>
-                            </button>
-                            <button type="button" class="age-option" role="radio" aria-checked="false" data-age="adult">
-                                <span class="age-icon">👤</span>
-                                <span class="age-label">Adulto</span>
-                                <span class="age-range">18+</span>
-                            </button>
+            <main class="auth-main">
+                <!-- Step 1: Basic Profile -->
+                <div id="profile-step-1" class="profile-step active">
+                    <h1 class="auth-title">Ayúdanos a personalizar tu experiencia</h1>
+
+                    <div class="profile-form">
+                        <!-- Field 1: Name -->
+                        <div class="auth-input-group">
+                            <label for="profile-name" class="settings-section-title-new"
+                                style="margin-left: 0; text-align: left;">¿Cómo te gustaría que te llamemos?</label>
+                            <input type="text" id="profile-name" class="auth-input" placeholder="Tu nombre o apodo"
+                                maxlength="15">
                         </div>
-                    </div>
-                </form>
 
-                <div class="profile-actions">
-                    <button id="profile-skip" class="btn btn-secondary">Omitir por ahora</button>
-                    <button id="profile-continue" class="btn btn-primary">
-                        Comenzar a Aprender
-                        <span class="btn-icon" aria-hidden="true">→</span>
-                    </button>
+                        <!-- Field 2: Role -->
+                        <div class="selection-group">
+                            <label class="settings-section-title-new" style="margin-left: 0; text-align: left;">¿Cómo
+                                usarás Braillito?</label>
+                            <div class="card-grid" id="profile-role-grid">
+                                <button class="card-option" data-role="myself">
+                                    <span class="option-icon">👤</span>
+                                    <span class="option-label">Para mí</span>
+                                </button>
+                                <button class="card-option" data-role="teach">
+                                    <span class="option-icon">👨‍👩‍👧‍👦</span>
+                                    <span class="option-label">Enseñar a alguien</span>
+                                </button>
+                                <button class="card-option" data-role="teacher">
+                                    <span class="option-icon">🧑‍🏫</span>
+                                    <span class="option-label">Soy educador</span>
+                                </button>
+                                <button class="card-option" data-role="caregiver">
+                                    <span class="option-icon">❤️</span>
+                                    <span class="option-label">Familiar / Cuidador</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Field 3: Experience -->
+                        <div class="selection-group">
+                            <label class="settings-section-title-new" style="margin-left: 0; text-align: left;">¿Qué
+                                experiencia tienes con el Braille?</label>
+                            <div class="card-grid" id="profile-exp-grid">
+                                <button class="card-option" data-exp="scratch">
+                                    <span class="option-icon">🌱</span>
+                                    <span class="option-label">Desde cero</span>
+                                </button>
+                                <button class="card-option" data-exp="basics">
+                                    <span class="option-icon">🌿</span>
+                                    <span class="option-label">Sé lo básico</span>
+                                </button>
+                                <button class="card-option" data-exp="advanced">
+                                    <span class="option-icon">🌳</span>
+                                    <span class="option-label">Ya leo Braille</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <button id="profile-step-1-continue" class="welcome-btn primary">
+                            <span>Continuar</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 12h14M12 5l7 7-7 7" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
-            </div>
+
+                <!-- Step 2: Personalization (Optional) -->
+                <div id="profile-step-2" class="profile-step">
+                    <p class="auth-subtitle">Opcional — puedes omitir esto por ahora</p>
+
+                    <div class="profile-form">
+                        <!-- Field 4: Goals -->
+                        <div class="selection-group">
+                            <label class="settings-section-title-new" style="margin-left: 0; text-align: left;">¿Qué te
+                                gustaría lograr?</label>
+                            <div class="card-grid multi-select" id="profile-goals-grid">
+                                <button class="card-option" data-goal="read">Leer palabras</button>
+                                <button class="card-option" data-goal="help">Ayudar a otros</button>
+                                <button class="card-option" data-goal="mind">Ejercitar la mente</button>
+                                <button class="card-option" data-goal="curiosity">Por curiosidad</button>
+                            </div>
+                        </div>
+
+                        <!-- Field 5: Preferences -->
+                        <div class="selection-group">
+                            <label class="settings-section-title-new" style="margin-left: 0; text-align: left;">¿Cómo
+                                prefieres aprender?</label>
+                            <div class="card-grid multi-select" id="profile-prefs-grid">
+                                <button class="card-option" data-pref="lessons">📘 Lecciones</button>
+                                <button class="card-option" data-pref="games">🎮 Juegos</button>
+                                <button class="card-option" data-pref="repetition">🔁 Repetición</button>
+                                <button class="card-option" data-pref="challenges">🧩 Desafíos</button>
+                            </div>
+                        </div>
+
+                        <footer class="welcome-footer" style="padding: 0; margin-top: 2rem;">
+                            <button id="profile-finish" class="welcome-btn primary">
+                                <span>Empezar a aprender</span>
+                            </button>
+                            <button id="profile-skip" class="welcome-btn secondary"
+                                style="margin-top: 1rem; border: none; background: transparent; color: var(--color-text-muted); text-transform: none; letter-spacing: normal;">
+                                Omitir por ahora
+                            </button>
+                        </footer>
+                    </div>
+                </div>
+            </main>
         </section>
 
         <!-- Home Dashboard (New Braillito Design) -->
@@ -412,15 +618,15 @@
                             <g>
                                 <line x1="100" y1="50" x2="100" y2="25" stroke="#112117" stroke-width="4"
                                     stroke-linecap="round" />
-                                <circle cx="100" cy="25" r="7" fill="#ff9045" />
+                                <circle class="mascot-antenna" cx="100" cy="25" r="7" fill="#ff9045" />
                                 <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
                                     stroke-width="12" />
-                                <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
-                                    stroke-width="12" />
+                                <path class="mascot-arm-r" d="M 155 110 Q 170 110 165 130" stroke="white"
+                                    stroke-linecap="round" stroke-width="12" />
                                 <rect x="50" y="50" width="100" height="110" rx="45" fill="white" />
                                 <g transform="translate(0, 10)">
-                                    <ellipse cx="80" cy="80" rx="10" ry="12" fill="#112117" />
-                                    <ellipse cx="120" cy="80" rx="10" ry="12" fill="#112117" />
+                                    <ellipse class="mascot-eye" cx="80" cy="80" rx="10" ry="12" fill="#112117" />
+                                    <ellipse class="mascot-eye" cx="120" cy="80" rx="10" ry="12" fill="#112117" />
                                     <circle cx="84" cy="76" r="3" fill="white" />
                                     <circle cx="124" cy="76" r="3" fill="white" />
                                     <circle cx="65" cy="95" r="5" fill="#ff9045" opacity="0.4" />
@@ -558,96 +764,6 @@
             </main>
         </section>
 
-        <!-- Braillito's Park (Play Area) -->
-        <section id="lab-screen" class="screen" role="main" aria-label="Parque de Braillito">
-            <header class="screen-header">
-                <button id="lab-back-btn" class="icon-btn back-btn" aria-label="Volver al panel">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M19 12H5M12 19l-7-7 7-7" />
-                    </svg>
-                </button>
-                <h1>El Parque de Braillito</h1>
-                <div class="spacer"></div>
-            </header>
-
-            <div class="lab-content">
-                <!-- Companion Viewport -->
-                <div class="companion-viewport">
-                    <div id="puppy-mascot" class="puppy-mascot">
-                        <svg class="puppy-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-                            <g>
-                                <!-- Antenna -->
-                                <line x1="100" y1="50" x2="100" y2="25" stroke="#112117" stroke-width="4"
-                                    stroke-linecap="round" />
-                                <circle cx="100" cy="25" r="7" fill="#ff9045" />
-
-                                <!-- Arms -->
-                                <path class="puppy-paw-l" d="M 45 110 Q 30 110 35 80" stroke="white"
-                                    stroke-linecap="round" stroke-width="12" />
-                                <path class="puppy-paw-r" d="M 155 110 Q 170 110 165 130" stroke="white"
-                                    stroke-linecap="round" stroke-width="12" />
-
-                                <!-- Body -->
-                                <rect x="50" y="50" width="100" height="110" rx="45" fill="white" />
-
-                                <!-- Face -->
-                                <g transform="translate(0, 10)">
-                                    <!-- Eyes -->
-                                    <ellipse class="puppy-eye" cx="80" cy="80" rx="10" ry="12" fill="#112117" />
-                                    <ellipse class="puppy-eye" cx="120" cy="80" rx="10" ry="12" fill="#112117" />
-                                    <circle cx="84" cy="76" r="3" fill="white" />
-                                    <circle cx="124" cy="76" r="3" fill="white" />
-
-                                    <!-- Blush -->
-                                    <circle cx="65" cy="95" r="5" fill="#ff9045" opacity="0.4" />
-                                    <circle cx="135" cy="95" r="5" fill="#ff9045" opacity="0.4" />
-
-                                    <!-- Smile/Mouth -->
-                                    <path class="puppy-tongue" d="M 90 95 Q 100 102 110 95" fill="none" stroke="#112117"
-                                        stroke-linecap="round" stroke-width="3" />
-                                </g>
-
-                                <!-- Belly panel with Braille dots -->
-                                <rect x="75" y="120" width="50" height="30" rx="8" fill="#ffedd5" />
-                                <circle cx="90" cy="135" r="3" fill="#ff9045" />
-                                <circle cx="110" cy="135" r="3" fill="#ff9045" />
-                            </g>
-                        </svg>
-                    </div>
-                    <div class="puppy-bubble">
-                        <p id="puppy-message">¡Guau! ¡Hola de nuevo!</p>
-                    </div>
-                </div>
-
-                <!-- Interactive Lab Area -->
-                <div class="lab-interaction-area">
-                    <div class="lab-cell-container">
-                        <div class="braille-cell interactive" id="lab-cell">
-                            <button class="dot-btn" data-dot="1" aria-label="Punto 1"><span
-                                    class="dot-visual"></span></button>
-                            <button class="dot-btn" data-dot="4" aria-label="Punto 4"><span
-                                    class="dot-visual"></span></button>
-                            <button class="dot-btn" data-dot="2" aria-label="Punto 2"><span
-                                    class="dot-visual"></span></button>
-                            <button class="dot-btn" data-dot="5" aria-label="Punto 5"><span
-                                    class="dot-visual"></span></button>
-                            <button class="dot-btn" data-dot="3" aria-label="Punto 3"><span
-                                    class="dot-visual"></span></button>
-                            <button class="dot-btn" data-dot="6" aria-label="Punto 6"><span
-                                    class="dot-visual"></span></button>
-                        </div>
-                        <div id="lab-result" class="lab-result">?</div>
-                    </div>
-
-                    <div class="lab-controls">
-                        <button id="lab-pat-btn" class="btn btn-secondary btn-small">Acariciar a Braillito</button>
-                        <button id="lab-reset-btn" class="btn btn-secondary btn-small">Limpiar Celda</button>
-                        <button id="lab-challenge-btn" class="btn btn-primary">Iniciar Reto</button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
         <!-- Practice Mode Setup Screen -->
         <section id="practice-screen" class="screen" role="main" aria-label="Configuración del Modo Práctica">
             <header class="screen-header">
@@ -775,10 +891,11 @@
             aria-label="Introducción a la Lección">
             <!-- Fixed Header -->
             <header class="pre-lesson-header">
-                <button id="lesson-back-btn" class="pre-lesson-back-btn" aria-label="Volver a los niveles">
+                <button id="lesson-back-btn" class="pre-lesson-back-btn back-btn" aria-label="Volver a los niveles">
                     <span class="material-symbols-outlined">arrow_back</span>
                 </button>
-                <div class="pre-lesson-unit-badge"><span id="lesson-title">Unidad 1</span></div>
+
+
                 <div class="spacer"></div>
             </header>
 
@@ -809,19 +926,22 @@
                                 <!-- Antenna -->
                                 <line stroke="#112117" stroke-linecap="round" stroke-width="4" x1="100" x2="100" y1="50"
                                     y2="25"></line>
-                                <circle cx="100" cy="25" fill="#ff9045" r="7" class="antenna-ball-pulse"></circle>
+                                <circle class="mascot-antenna" cx="100" cy="25" fill="#ff9045" r="7"></circle>
                                 <!-- Arms -->
-                                <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
-                                    stroke-width="12"></path>
+                                <path class="mascot-arm-r" d="M 45 110 Q 30 110 35 80" stroke="white"
+                                    stroke-linecap="round" stroke-width="12"></path>
                                 <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
                                     stroke-width="12"></path>
                                 <!-- Body -->
-                                <rect fill="white" height="110" rx="45" width="100" x="50" y="50"></rect>
+                                <rect class="mascot-body" fill="white" height="110" rx="45" width="100" x="50" y="50">
+                                </rect>
                                 <!-- Face -->
                                 <g transform="translate(0, 10)">
                                     <!-- Eyes -->
-                                    <ellipse cx="80" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
-                                    <ellipse cx="120" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
+                                    <ellipse class="mascot-eye" cx="80" cy="80" fill="#112117" rx="10" ry="12">
+                                    </ellipse>
+                                    <ellipse class="mascot-eye" cx="120" cy="80" fill="#112117" rx="10" ry="12">
+                                    </ellipse>
                                     <circle cx="84" cy="76" fill="white" r="3"></circle>
                                     <circle cx="124" cy="76" fill="white" r="3"></circle>
                                     <!-- Blush -->
@@ -897,7 +1017,8 @@
 
 
         <!-- Instruction Screen - New Lesson Design -->
-        <section id="instruction-screen" class="screen lesson-screen-new" role="main" aria-label="Fase de Aprendizaje">
+        <section id="instruction-screen" class="screen lesson-screen-new lesson-shell" role="main"
+            aria-label="Fase de Aprendizaje">
             <!-- Header with progress bar and lives -->
             <header class="lesson-header-new">
                 <button id="instruction-skip-btn" class="lesson-close-btn" aria-label="Cerrar lección">
@@ -908,10 +1029,9 @@
                         <div class="lesson-progress-shine"></div>
                     </div>
                 </div>
-                <div class="lesson-lives">
-                    <span class="material-symbols-outlined lesson-heart-icon">favorite</span>
-                    <span id="lesson-lives-count" class="lesson-lives-count">5</span>
-                </div>
+                <button class="lesson-audio-toggle" aria-label="Toggle lesson audio" aria-checked="true">
+                    <span class="material-symbols-outlined">volume_up</span>
+                </button>
             </header>
 
             <!-- Main Content -->
@@ -940,18 +1060,21 @@
                                     <!-- Antenna -->
                                     <line stroke="#112117" stroke-linecap="round" stroke-width="4" x1="100" x2="100"
                                         y1="50" y2="25"></line>
-                                    <circle cx="100" cy="25" fill="#ff9045" r="7"></circle>
+                                    <circle class="mascot-antenna" cx="100" cy="25" fill="#ff9045" r="7"></circle>
                                     <!-- Arms -->
                                     <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
                                         stroke-width="12"></path>
-                                    <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
-                                        stroke-width="12"></path>
+                                    <path class="mascot-arm-r" d="M 155 110 Q 170 110 165 130" stroke="white"
+                                        stroke-linecap="round" stroke-width="12"></path>
                                     <!-- Body -->
-                                    <rect fill="white" height="110" rx="45" width="100" x="50" y="50"></rect>
+                                    <rect class="mascot-body" fill="white" height="110" rx="45" width="100" x="50"
+                                        y="50"></rect>
                                     <!-- Face -->
                                     <g transform="translate(0, 10)">
-                                        <ellipse cx="80" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
-                                        <ellipse cx="120" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
+                                        <ellipse class="mascot-eye" cx="80" cy="80" fill="#112117" rx="10" ry="12">
+                                        </ellipse>
+                                        <ellipse class="mascot-eye" cx="120" cy="80" fill="#112117" rx="10" ry="12">
+                                        </ellipse>
                                         <circle cx="84" cy="76" fill="white" r="3"></circle>
                                         <circle cx="124" cy="76" fill="white" r="3"></circle>
                                         <circle cx="65" cy="95" fill="#ff9045" opacity="0.4" r="5"></circle>
@@ -967,8 +1090,8 @@
                             </svg>
                         </div>
                         <div class="lesson-speech-bubble">
-                            <p id="instruction-puppy-message">Así se ve la <span id="instruction-letter"
-                                    class="lesson-letter-highlight">letra A</span></p>
+                            <p id="instruction-puppy-message">Aprendamos la <span id="instruction-letter"
+                                    class="lesson-letter-highlight">...</span></p>
                             <div class="lesson-bubble-tail"></div>
                         </div>
                     </div>
@@ -976,22 +1099,22 @@
                     <!-- Braille Cell with Glow Effect - Single large cell -->
                     <div class="lesson-braille-container">
                         <div class="lesson-braille-cell-single" id="instruction-cell-container">
-                            <div class="braille-lesson-cell" id="instruction-cell">
-                                <button class="braille-lesson-dot" data-dot="1"></button>
-                                <button class="braille-lesson-dot" data-dot="4"></button>
-                                <button class="braille-lesson-dot" data-dot="2"></button>
-                                <button class="braille-lesson-dot" data-dot="5"></button>
-                                <button class="braille-lesson-dot" data-dot="3"></button>
-                                <button class="braille-lesson-dot" data-dot="6"></button>
-                            </div>
-                            <!-- Hidden prefix cell for capital letters/numbers -->
+                            <!-- Hidden prefix cell for capital letters/numbers (Now first in DOM for Left display) -->
                             <div class="braille-lesson-cell hidden" id="instruction-cell-prefix">
-                                <button class="braille-lesson-dot" data-dot="1"></button>
-                                <button class="braille-lesson-dot" data-dot="4"></button>
-                                <button class="braille-lesson-dot" data-dot="2"></button>
-                                <button class="braille-lesson-dot" data-dot="5"></button>
-                                <button class="braille-lesson-dot" data-dot="3"></button>
-                                <button class="braille-lesson-dot" data-dot="6"></button>
+                                <button class="braille-lesson-dot" data-dot="1" aria-label="Punto 1">1</button>
+                                <button class="braille-lesson-dot" data-dot="4" aria-label="Punto 4">4</button>
+                                <button class="braille-lesson-dot" data-dot="2" aria-label="Punto 2">2</button>
+                                <button class="braille-lesson-dot" data-dot="5" aria-label="Punto 5">5</button>
+                                <button class="braille-lesson-dot" data-dot="3" aria-label="Punto 3">3</button>
+                                <button class="braille-lesson-dot" data-dot="6" aria-label="Punto 6">6</button>
+                            </div>
+                            <div class="braille-lesson-cell" id="instruction-cell">
+                                <button class="braille-lesson-dot" data-dot="1" aria-label="Punto 1">1</button>
+                                <button class="braille-lesson-dot" data-dot="4" aria-label="Punto 4">4</button>
+                                <button class="braille-lesson-dot" data-dot="2" aria-label="Punto 2">2</button>
+                                <button class="braille-lesson-dot" data-dot="5" aria-label="Punto 5">5</button>
+                                <button class="braille-lesson-dot" data-dot="3" aria-label="Punto 3">3</button>
+                                <button class="braille-lesson-dot" data-dot="6" aria-label="Punto 6">6</button>
                             </div>
                         </div>
                     </div>
@@ -1016,38 +1139,30 @@
         </section>
 
         <!-- Build Letter Game Screen -->
-        <section id="game-build-screen" class="screen" role="main" aria-label="Juego Construye la Letra">
+        <section id="game-build-screen" class="screen lesson-screen-new lesson-shell" role="main"
+            aria-label="Juego Construye la Letra">
             <!-- Background decorations -->
             <div class="pick-bg-pattern"></div>
             <div class="pick-bg-glow"></div>
 
             <!-- Header -->
-            <header class="relative z-10 w-full flex items-center justify-between p-6 max-w-md mx-auto pt-8">
-                <button id="game-exit-btn"
-                    class="w-12 h-12 flex items-center justify-center rounded-full text-gray-400 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors icon-btn">
-                    <span class="material-symbols-outlined font-bold text-3xl">close</span>
+            <header class="lesson-header-new">
+                <button id="game-exit-btn" class="lesson-close-btn" aria-label="Cerrar juego">
+                    <span class="material-symbols-outlined">close</span>
                 </button>
-
-                <!-- Progress Bar -->
-                <div
-                    class="flex-1 mx-6 h-4 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden relative max-w-[160px]">
-                    <div id="game-progress-fill" class="absolute top-0 left-0 h-full bg-[#ff9045] rounded-full w-[20%]">
+                <div class="lesson-progress-bar-container">
+                    <div id="game-progress-fill" class="lesson-progress-bar-fill" style="width: 20%">
+                        <div class="lesson-progress-shine"></div>
                     </div>
                     <span id="game-progress-text" class="sr-only">1 / 10</span>
                 </div>
-
-                <!-- Lives Heart -->
-                <div class="flex items-center gap-2">
-                    <span class="material-symbols-outlined text-[#ef4444] filled"
-                        style="font-variation-settings: 'FILL' 1;">favorite</span>
-                    <span class="text-[#ef4444] font-bold text-xl">5</span>
-                </div>
+                <button class="lesson-audio-toggle" aria-label="Toggle lesson audio" aria-checked="true">
+                    <span class="material-symbols-outlined">volume_up</span>
+                </button>
             </header>
 
-            <div class="game-content">
-
-                <h1 class="lesson-phase-title">Construye la letra Braille</h1>
-
+            <!-- Main Content -->
+            <main class="lesson-main-content">
                 <div class="lesson-content-area">
                     <!-- Pet mascot with speech bubble -->
                     <div class="lesson-mascot-row">
@@ -1097,9 +1212,15 @@
                             </svg>
                         </div>
                         <div class="lesson-speech-bubble">
-                            <p>¿Cuál de estas es la <span id="target-letter" class="lesson-letter-highlight">letra
-                                    a</span>?</p>
+                            <p id="build-game-message">Tocá los puntos correctos para construir la letra en Braille.</p>
                             <div class="lesson-bubble-tail"></div>
+                        </div>
+                    </div>
+
+                    <!-- Large Target Letter Display -->
+                    <div class="build-target-letter-display">
+                        <div class="build-target-letter-circle" id="build-target-letter-circle">
+                            <span id="build-target-letter">A</span>
                         </div>
                     </div>
 
@@ -1116,18 +1237,17 @@
                             </div>
                             <!-- Hidden prefix cell for capital letters/numbers -->
                             <div class="braille-lesson-cell hidden" id="build-prefix-cell">
-                                <button class="braille-lesson-dot" data-dot="1"></button>
-                                <button class="braille-lesson-dot" data-dot="4"></button>
-                                <button class="braille-lesson-dot" data-dot="2"></button>
-                                <button class="braille-lesson-dot" data-dot="5"></button>
-                                <button class="braille-lesson-dot" data-dot="3"></button>
-                                <button class="braille-lesson-dot" data-dot="6"></button>
+                                <button class="braille-lesson-dot" data-dot="1" aria-label="Punto 1">1</button>
+                                <button class="braille-lesson-dot" data-dot="4" aria-label="Punto 4">4</button>
+                                <button class="braille-lesson-dot" data-dot="2" aria-label="Punto 2">2</button>
+                                <button class="braille-lesson-dot" data-dot="5" aria-label="Punto 5">5</button>
+                                <button class="braille-lesson-dot" data-dot="3" aria-label="Punto 3">3</button>
+                                <button class="braille-lesson-dot" data-dot="6" aria-label="Punto 6">6</button>
                             </div>
                         </div>
                     </div>
                 </div>
-
-            </div>
+            </main>
 
             <!-- Footer -->
             <footer class="lesson-footer-new">
@@ -1148,39 +1268,38 @@
         </section>
 
         <!-- Pick Cell Game Screen - New Design -->
-        <section id="game-pick-screen" class="screen pick-screen-new" role="main"
+        <section id="game-pick-screen" class="screen pick-screen-new lesson-shell" role="main"
             aria-label="Juego Elige la Celda Correcta">
             <!-- Background decorations -->
             <div class="pick-bg-pattern"></div>
             <div class="pick-bg-glow"></div>
 
-            <!-- Repaso 2.0 Header -->
-            <header class="pick-v2-header">
-                <button id="pick-exit-btn" class="pick-v2-close-btn" aria-label="Salir del juego">
-                    <span class="material-symbols-outlined" style="font-size: 24px; font-weight: 700;">close</span>
+            <!-- Header - Same as Instruction Screen -->
+            <header class="lesson-header-new">
+                <button id="pick-exit-btn" class="lesson-close-btn" aria-label="Salir del juego">
+                    <span class="material-symbols-outlined">close</span>
                 </button>
-                <div class="pick-v2-progress-container">
-                    <div id="pick-progress-fill" class="pick-v2-progress-fill">
-                        <div class="pick-v2-progress-shine"></div>
+                <div class="lesson-progress-bar-container">
+                    <div id="pick-progress-fill" class="lesson-progress-bar-fill" style="width: 0%">
+                        <div class="lesson-progress-shine"></div>
                     </div>
                 </div>
-                <div class="pick-v2-lives">
-                    <span class="material-symbols-outlined">favorite</span>
-                    <span id="pick-lives-count" class="pick-v2-lives-count">5</span>
-                </div>
+                <button class="lesson-audio-toggle" aria-label="Toggle lesson audio" aria-checked="true">
+                    <span class="material-symbols-outlined">volume_up</span>
+                </button>
             </header>
 
             <!-- Repaso 2.0 Main Content -->
-            <main class="pick-v2-main">
+            <main class="lesson-main-content">
+                <h1 class="lesson-phase-title">Elige la celda correcta</h1>
 
-
-                <div class="pick-v2-content-wrapper">
-                    <!-- Mascot and Question -->
-                    <div class="pick-v2-mascot-area">
-                        <div class="pick-v2-mascot">
-                            <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <div class="lesson-content-area">
+                    <!-- Mascot and Question - Same as Instruction Screen -->
+                    <div class="lesson-mascot-row">
+                        <div class="lesson-mascot-mini">
+                            <svg class="lesson-pet-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
                                 <defs>
-                                    <filter height="140%" id="soft-shadow-v2" width="140%" x="-20%" y="-20%">
+                                    <filter height="140%" id="pick-lesson-shadow" width="140%" x="-20%" y="-20%">
                                         <feGaussianBlur in="SourceAlpha" stdDeviation="2"></feGaussianBlur>
                                         <feOffset dx="0" dy="3" result="offsetblur"></feOffset>
                                         <feComponentTransfer>
@@ -1192,36 +1311,41 @@
                                         </feMerge>
                                     </filter>
                                 </defs>
-                                <g filter="url(#soft-shadow-v2)">
-                                    <line stroke="#ff9045" stroke-linecap="round" stroke-width="6" x1="100" x2="100"
-                                        y1="30" y2="55"></line>
-                                    <circle cx="100" cy="25" fill="#ff9045" r="8"></circle>
-                                    <rect fill="white" height="90" rx="20" width="100" x="50" y="55"></rect>
-                                    <circle cx="75" cy="90" fill="#112117" r="8"></circle>
-                                    <circle cx="77" cy="88" fill="white" r="2"></circle>
-                                    <circle cx="125" cy="90" fill="#112117" r="8"></circle>
-                                    <circle cx="127" cy="88" fill="white" r="2"></circle>
-                                    <circle cx="65" cy="105" fill="#ff9045" opacity="0.3" r="7"></circle>
-                                    <circle cx="135" cy="105" fill="#ff9045" opacity="0.3" r="7"></circle>
-                                    <path d="M85 115 Q100 125 115 115" fill="none" stroke="#112117"
-                                        stroke-linecap="round" stroke-width="4"></path>
-                                    <path
-                                        d="M60 160 C60 150 70 150 70 150 H130 C130 150 140 150 140 160 V220 H60 V160 Z"
-                                        fill="white"></path>
-                                    <circle cx="90" cy="175" fill="#ff9045" r="5"></circle>
-                                    <circle cx="110" cy="175" fill="#ff9045" r="5"></circle>
-                                    <circle cx="90" cy="195" fill="#e2e8f0" r="5"></circle>
-                                    <circle cx="110" cy="195" fill="#e2e8f0" r="5"></circle>
+                                <g filter="url(#pick-lesson-shadow)">
+                                    <!-- Antenna -->
+                                    <line stroke="#112117" stroke-linecap="round" stroke-width="4" x1="100" x2="100"
+                                        y1="50" y2="25"></line>
+                                    <circle cx="100" cy="25" fill="#ff9045" r="7"></circle>
+                                    <!-- Arms -->
+                                    <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
+                                        stroke-width="12"></path>
+                                    <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
+                                        stroke-width="12"></path>
+                                    <!-- Body -->
+                                    <rect fill="white" height="110" rx="45" width="100" x="50" y="50"></rect>
+                                    <!-- Face -->
+                                    <g transform="translate(0, 10)">
+                                        <ellipse cx="80" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
+                                        <ellipse cx="120" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
+                                        <circle cx="84" cy="76" fill="white" r="3"></circle>
+                                        <circle cx="124" cy="76" fill="white" r="3"></circle>
+                                        <circle cx="65" cy="95" fill="#ff9045" opacity="0.4" r="5"></circle>
+                                        <circle cx="135" cy="95" fill="#ff9045" opacity="0.4" r="5"></circle>
+                                        <path d="M 90 95 Q 100 102 110 95" fill="none" stroke="#112117"
+                                            stroke-linecap="round" stroke-width="3"></path>
+                                    </g>
+                                    <!-- Belly panel with Braille dots -->
+                                    <rect x="75" y="120" width="50" height="30" rx="8" fill="#ffedd5"></rect>
+                                    <circle cx="90" cy="135" r="3" fill="#ff9045"></circle>
+                                    <circle cx="110" cy="135" r="3" fill="#ff9045"></circle>
                                 </g>
                             </svg>
                         </div>
-                        <div class="pick-v2-speech-bubble">
-                            <p class="pick-v2-question-text">
-                                ¿Cuál de estas es la <span id="pick-target-letter"
-                                    style="color: var(--pick-primary); font-weight: 700;">letra a</span>?
-                            </p>
-                            <div class="pick-v2-bubble-tail-border"></div>
-                            <div class="pick-v2-bubble-tail-fill"></div>
+                        <div class="lesson-speech-bubble">
+                            <p id="pick-game-message">¿Cuál de estas es la <span id="pick-target-letter"
+                                    class="lesson-letter-highlight">letra
+                                    a</span>?</p>
+                            <div class="lesson-bubble-tail"></div>
                         </div>
                     </div>
 
@@ -1233,70 +1357,115 @@
                 </div>
             </main>
 
-            <!-- Repaso 2.0 Footer -->
-            <footer class="pick-v2-footer">
-                <button id="pick-check-btn" class="pick-v2-check-btn" disabled>
+            <!-- Footer - Same style as other lesson screens -->
+            <footer class="lesson-footer-new">
+                <button id="pick-check-btn" class="lesson-btn-primary" disabled>
                     COMPROBAR
                 </button>
             </footer>
         </section>
 
         <!-- Results Screen -->
-        <section id="results-screen" class="screen" role="main" aria-label="Resultados del Nivel">
-            <div class="results-content">
-                <div class="results-celebration" aria-hidden="true">
-                    <div class="confetti"></div>
-                </div>
+        <section id="results-screen" class="screen level-complete-screen" role="main" aria-label="Resultados del Nivel">
+            <div class="level-pattern"></div>
+            <div class="level-bg-glow glow-orange"></div>
+            <div class="level-bg-glow glow-purple"></div>
 
-                <div class="stars-display" id="stars-container" role="img" aria-label="2 de 3 estrellas ganadas">
-                    <span class="result-star earned">⭐</span>
-                    <span class="result-star earned">⭐</span>
-                    <span class="result-star">☆</span>
-                </div>
-
-                <h1 class="results-title">¡Nivel Completado!</h1>
-
-                <div class="results-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Puntuación</span>
-                        <span id="result-score" class="stat-value">850</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Precisión</span>
-                        <span id="result-accuracy" class="stat-value">85%</span>
-                    </div>
-                    <div class="stat-item highlight">
-                        <span class="stat-label">XP Ganado</span>
-                        <span id="result-xp" class="stat-value xp-gain">+120</span>
+            <div class="level-complete-wrapper">
+                <div class="level-stars" aria-hidden="true">
+                    <div class="level-stars-container" id="stars-container" role="img"
+                        aria-label="2 de 3 estrellas ganadas">
+                        <span class="result-star earned">⭐</span>
+                        <span class="result-star earned">⭐</span>
+                        <span class="result-star">☆</span>
                     </div>
                 </div>
 
-                <div class="streak-celebration" id="streak-bonus" hidden>
-                    <div class="streak-fire">🔥</div>
+                <div class="level-mascot">
+                    <div class="level-mascot-circle">
+                        <svg class="level-mascot-svg" fill="none" viewBox="0 0 200 200"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <filter height="140%" id="level-soft-shadow" width="140%" x="-20%" y="-20%">
+                                    <feGaussianBlur in="SourceAlpha" stdDeviation="2"></feGaussianBlur>
+                                    <feOffset dx="0" dy="3" result="offsetblur"></feOffset>
+                                    <feComponentTransfer>
+                                        <feFuncA slope="0.15" type="linear"></feFuncA>
+                                    </feComponentTransfer>
+                                    <feMerge>
+                                        <feMergeNode></feMergeNode>
+                                        <feMergeNode in="SourceGraphic"></feMergeNode>
+                                    </feMerge>
+                                </filter>
+                            </defs>
+                            <g filter="url(#level-soft-shadow)">
+                                <line stroke="#ff9045" stroke-linecap="round" stroke-width="6" x1="100" x2="100" y1="30"
+                                    y2="55"></line>
+                                <circle cx="100" cy="25" fill="#ff9045" r="8"></circle>
+                                <rect fill="white" height="90" rx="20" width="100" x="50" y="55"></rect>
+                                <circle cx="75" cy="90" fill="#112117" r="8"></circle>
+                                <circle cx="77" cy="88" fill="white" r="2"></circle>
+                                <circle cx="125" cy="90" fill="#112117" r="8"></circle>
+                                <circle cx="127" cy="88" fill="white" r="2"></circle>
+                                <circle cx="65" cy="105" fill="#ff9045" opacity="0.3" r="7"></circle>
+                                <circle cx="135" cy="105" fill="#ff9045" opacity="0.3" r="7"></circle>
+                                <path d="M85 115 Q100 125 115 115" fill="none" stroke="#112117" stroke-linecap="round"
+                                    stroke-width="4"></path>
+                                <path d="M60 160 C60 150 70 150 70 150 H130 C130 150 140 150 140 160 V220 H60 V160 Z"
+                                    fill="white"></path>
+                                <circle cx="90" cy="175" fill="#ff9045" r="5"></circle>
+                                <circle cx="110" cy="175" fill="#ff9045" r="5"></circle>
+                                <circle cx="90" cy="195" fill="#e2e8f0" r="5"></circle>
+                                <circle cx="110" cy="195" fill="#e2e8f0" r="5"></circle>
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="level-spark spark-large"></div>
+                    <div class="level-spark spark-small"></div>
+                </div>
+
+                <h1 class="level-title">¡Nivel Completado!</h1>
+
+                <div class="level-stats-grid">
+                    <div class="level-stat-card">
+                        <span class="level-stat-label">Puntuación</span>
+                        <span id="result-score" class="level-stat-value score">1200</span>
+                    </div>
+                    <div class="level-stat-card">
+                        <span class="level-stat-label">Precisión</span>
+                        <span id="result-accuracy" class="level-stat-value accuracy">80%</span>
+                    </div>
+                    <div class="level-stat-card">
+                        <span class="level-stat-label">XP Ganados</span>
+                        <span id="result-xp" class="level-stat-value xp-gain">+985</span>
+                    </div>
+                </div>
+
+                <div class="level-streak" id="streak-bonus" hidden>
+                    <span class="material-symbols-outlined">local_fire_department</span>
                     <span>Bonus de Racha: +25 XP</span>
                 </div>
 
-                <!-- Native Ad Banner (Results) -->
-                <div class="ad-container">
-                    <div class="native-ad-banner">
-                        <span class="ad-badge">Anuncio</span>
-                        <div class="native-ad-content">
-                            <div class="ad-title">Desbloquea Todo 🔓</div>
-                            <div class="ad-desc">Aprende sin límites con Premium</div>
-                            <div class="ad-cta">VER OFERTA</div>
-                        </div>
+                <div class="level-premium-card">
+                    <div class="level-premium-meta">
+                        <span class="level-premium-pill">Anuncio</span>
+                        <span class="level-premium-lock material-symbols-outlined">lock_open</span>
                     </div>
+                    <h3 class="level-premium-title">Desbloquea Todo</h3>
+                    <p class="level-premium-desc">Aprende sin límites con Premium</p>
+                    <button class="level-premium-btn">Ver Oferta</button>
                 </div>
 
-                <div class="results-actions">
-                    <button id="try-again-btn" class="btn btn-secondary">Intentar de Nuevo</button>
-                    <button id="next-level-btn" class="btn btn-primary">
-                        Siguiente Nivel
-                        <span class="btn-icon" aria-hidden="true">→</span>
-                    </button>
+                <div class="level-actions">
+                    <div class="level-actions-grid">
+                        <button id="try-again-btn" class="level-action-btn ghost">Intentar de Nuevo</button>
+                        <button id="next-level-btn" class="level-action-btn primary">
+                            <span>Siguiente Nivel</span>
+                            <span class="material-symbols-outlined">arrow_forward</span>
+                        </button>
+                    </div>
+                    <button id="results-home-btn" class="level-home-link">Volver al Inicio</button>
                 </div>
-
-                <button id="results-home-btn" class="text-btn">Volver al Inicio</button>
             </div>
         </section>
 
@@ -1367,7 +1536,7 @@
 
             <!-- Header with back button -->
             <header class="games-header">
-                <button id="games-back-btn" class="games-back-btn" aria-label="Volver">
+                <button id="games-back-btn" class="games-back-btn back-btn" aria-label="Volver">
                     <span class="material-symbols-outlined">arrow_back</span>
                 </button>
                 <h1 class="games-header-title">Juegos</h1>
@@ -1397,18 +1566,21 @@
                                 <!-- Antenna -->
                                 <line stroke="#112117" stroke-linecap="round" stroke-width="4" x1="100" x2="100" y1="50"
                                     y2="25"></line>
-                                <circle cx="100" cy="25" fill="#ff9045" r="7"></circle>
+                                <circle class="mascot-antenna" cx="100" cy="25" fill="#ff9045" r="7"></circle>
                                 <!-- Arms -->
                                 <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
                                     stroke-width="12"></path>
-                                <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
-                                    stroke-width="12"></path>
+                                <path class="mascot-arm-r" d="M 155 110 Q 170 110 165 130" stroke="white"
+                                    stroke-linecap="round" stroke-width="12"></path>
                                 <!-- Body -->
-                                <rect fill="white" height="110" rx="45" width="100" x="50" y="50"></rect>
+                                <rect class="mascot-body" fill="white" height="110" rx="45" width="100" x="50" y="50">
+                                </rect>
                                 <!-- Face -->
                                 <g transform="translate(0, 10)">
-                                    <ellipse cx="80" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
-                                    <ellipse cx="120" cy="80" fill="#112117" rx="10" ry="12"></ellipse>
+                                    <ellipse class="mascot-eye" cx="80" cy="80" fill="#112117" rx="10" ry="12">
+                                    </ellipse>
+                                    <ellipse class="mascot-eye" cx="120" cy="80" fill="#112117" rx="10" ry="12">
+                                    </ellipse>
                                     <circle cx="84" cy="76" fill="white" r="3"></circle>
                                     <circle cx="124" cy="76" fill="white" r="3"></circle>
                                     <circle cx="65" cy="95" fill="#ff9045" opacity="0.4" r="5"></circle>
@@ -1528,7 +1700,7 @@
 
             <!-- Header -->
             <header class="game-play-header">
-                <button id="guess-letter-back-btn" class="game-play-back-btn" aria-label="Salir del juego">
+                <button id="guess-letter-back-btn" class="game-play-back-btn back-btn" aria-label="Salir del juego">
                     <span class="material-symbols-outlined">close</span>
                 </button>
                 <div class="game-play-stats">
@@ -1634,7 +1806,7 @@
 
             <!-- Header -->
             <header class="game-play-header">
-                <button id="form-word-back-btn" class="game-play-back-btn" aria-label="Salir del juego">
+                <button id="form-word-back-btn" class="game-play-back-btn back-btn" aria-label="Salir del juego">
                     <span class="material-symbols-outlined">close</span>
                 </button>
                 <div class="game-play-stats">
@@ -1694,7 +1866,7 @@
 
             <!-- Header -->
             <header class="game-play-header">
-                <button id="memory-back-btn" class="game-play-back-btn" aria-label="Salir del juego">
+                <button id="memory-back-btn" class="game-play-back-btn back-btn" aria-label="Salir del juego">
                     <span class="material-symbols-outlined">close</span>
                 </button>
                 <div class="game-play-stats">
@@ -1728,7 +1900,7 @@
         <section id="settings-screen" class="screen settings-new" role="main" aria-label="Configuración">
             <header class="settings-header-new">
                 <div class="settings-header-left">
-                    <button id="settings-back-btn" class="settings-back-btn" aria-label="Volver al panel">
+                    <button id="settings-back-btn" class="settings-back-btn back-btn" aria-label="Volver al panel">
                         <span class="material-symbols-outlined">arrow_back</span>
                     </button>
                     <h1>Ajustes</h1>
@@ -1944,15 +2116,16 @@
                                 <g>
                                     <line x1="100" y1="50" x2="100" y2="25" stroke="#112117" stroke-width="4"
                                         stroke-linecap="round" />
-                                    <circle cx="100" cy="25" r="7" fill="#ff9045" />
+                                    <circle class="mascot-antenna" cx="100" cy="25" r="7" fill="#ff9045" />
                                     <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round"
                                         stroke-width="12" />
-                                    <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round"
-                                        stroke-width="12" />
-                                    <rect x="50" y="50" width="100" height="110" rx="45" fill="white" />
+                                    <path class="mascot-arm-r" d="M 155 110 Q 170 110 165 130" stroke="white"
+                                        stroke-linecap="round" stroke-width="12" />
+                                    <rect class="mascot-body" x="50" y="50" width="100" height="110" rx="45"
+                                        fill="white" />
                                     <g transform="translate(0, 10)">
-                                        <ellipse cx="80" cy="80" rx="10" ry="12" fill="#112117" />
-                                        <ellipse cx="120" cy="80" rx="10" ry="12" fill="#112117" />
+                                        <ellipse class="mascot-eye" cx="80" cy="80" rx="10" ry="12" fill="#112117" />
+                                        <ellipse class="mascot-eye" cx="120" cy="80" rx="10" ry="12" fill="#112117" />
                                         <circle cx="84" cy="76" r="3" fill="white" />
                                         <circle cx="124" cy="76" r="3" fill="white" />
                                         <circle cx="65" cy="95" r="5" fill="#ff9045" opacity="0.4" />

@@ -1,0 +1,48 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="mascot-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2"></feGaussianBlur>
+      <feOffset dx="0" dy="3" result="offsetblur"></feOffset>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.15"></feFuncA>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#mascot-shadow)">
+    <!-- Antenna -->
+    <line x1="100" y1="50" x2="100" y2="25" stroke="#112117" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="100" cy="25" r="7" fill="#ff9045"/>
+    
+    <!-- Arms -->
+    <path d="M 45 110 Q 30 110 35 80" stroke="white" stroke-linecap="round" stroke-width="12"/>
+    <path d="M 155 110 Q 170 110 165 130" stroke="white" stroke-linecap="round" stroke-width="12"/>
+    
+    <!-- Body -->
+    <rect x="50" y="50" width="100" height="110" rx="45" fill="white"/>
+    
+    <!-- Face -->
+    <g transform="translate(0, 10)">
+      <!-- Eyes -->
+      <ellipse cx="80" cy="80" rx="10" ry="12" fill="#112117"/>
+      <ellipse cx="120" cy="80" rx="10" ry="12" fill="#112117"/>
+      <circle cx="84" cy="76" r="3" fill="white"/>
+      <circle cx="124" cy="76" r="3" fill="white"/>
+      
+      <!-- Blush -->
+      <circle cx="65" cy="95" r="5" fill="#ff9045" opacity="0.4"/>
+      <circle cx="135" cy="95" r="5" fill="#ff9045" opacity="0.4"/>
+      
+      <!-- Smile -->
+      <path d="M 90 95 Q 100 102 110 95" fill="none" stroke="#112117" stroke-linecap="round" stroke-width="3"/>
+    </g>
+    
+    <!-- Belly panel with Braille dots -->
+    <rect x="75" y="120" width="50" height="30" rx="8" fill="#ffedd5"/>
+    <circle cx="90" cy="135" r="3" fill="#ff9045"/>
+    <circle cx="110" cy="135" r="3" fill="#ff9045"/>
+  </g>
+</svg>

@@ -80,10 +80,8 @@ const DOT_POSITIONS = {
     6: 'abajo derecha'
 };
 
-
 // Level definitions - Full curriculum covering A-Z (Spanish)
 const LEVELS = [
-
     // ==================== CAPÍTULO 1: LOS FUNDAMENTOS ====================
     {
         id: '1-1',
@@ -662,21 +660,33 @@ function dotsMatch(userDots, correctDots) {
     return sortedUser.every((dot, i) => dot === sortedCorrect[i]);
 }
 
+// Resolve any supported character into its Braille dot pattern
+function resolveDots(char) {
+    if (!char) return null;
+    if (/[A-Z]/.test(char)) return BRAILLE_ALPHABET[char.toLowerCase()];
+    if (/[0-9]/.test(char)) return BRAILLE_NUMBERS[char];
+    return BRAILLE_SYMBOLS[char] || BRAILLE_ALPHABET[char.toLowerCase()] || null;
+}
+
 // Generate distractors for pick game (similar but incorrect patterns)
 function generateDistractors(correctLetter, count = 3, availableLetters = null) {
-    const correct = BRAILLE_ALPHABET[correctLetter];
-    const letters = availableLetters || Object.keys(BRAILLE_ALPHABET);
+    const correct = resolveDots(correctLetter);
+    if (!correct) return [];
+
+    const letters = (availableLetters || Object.keys(BRAILLE_ALPHABET)).filter(Boolean);
 
     // Score letters by similarity to correct answer
     const scored = letters
         .filter(l => l !== correctLetter)
         .map(letter => {
-            const dots = BRAILLE_ALPHABET[letter];
+            const dots = resolveDots(letter);
+            if (!dots) return null;
             // Calculate similarity (shared dots)
             const shared = dots.filter(d => correct.includes(d)).length;
             const totalDiff = Math.abs(dots.length - correct.length);
             return { letter, similarity: shared - totalDiff };
         })
+        .filter(Boolean)
         .sort((a, b) => b.similarity - a.similarity);
 
     // Pick top similar letters as distractors

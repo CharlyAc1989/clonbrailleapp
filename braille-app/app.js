@@ -1,11 +1,31 @@
 /**
  * Braille Quest - Main Application
  * Game engine, navigation, accessibility, and state management
+ * 
+ * ================================
+ * MODULAR ARCHITECTURE NOTE
+ * ================================
+ * 
+ * A modular structure is being introduced in src/:
+ * 
+ * src/
+ * ├── services/           # ✅ StateService, AudioService, HapticService, PWAService
+ * ├── games/              # ✅ GuessLetterGame, FormWordGame, MemoryGame
+ * │   ├── index.js        # Barrel export
+ * │   └── *.js            # Individual game modules
+ * ├── engines/            # 🔲 InstructionEngine, GameEngine (pending)
+ * └── utils/              # ✅ timing.js
+ * 
+ * This monolithic file remains the active entry point until full migration.
+ * Games use dependency injection for testability - see src/games/ for examples.
  */
 
 // Import Vercel Speed Insights (will be bundled by Vite)
 import { injectSpeedInsights } from "@vercel/speed-insights";
+import { createGuessLetterGame, createFormWordGame, createMemoryGame } from './src/games/index.js';
+import { migrateProgress } from "./src/lib/stateMigration.js";
 injectSpeedInsights();
+
 
 (function () {
     'use strict';
@@ -21,8 +41,30 @@ injectSpeedInsights();
         DOT_GAP: 100,          // Gap between dots
         AUTO_ADVANCE: 8000,    // Auto-advance to next letter
         FEEDBACK_DELAY: 1500,  // Feedback display time
-        DEBOUNCE_SAVE: 500     // State save debounce
+        DEBOUNCE_SAVE: 500,    // State save debounce
+        LESSON_INIT_TIMEOUT: 7000, // Lesson init watchdog
+        AUDIO_STEP_TIMEOUT: 7000   // Max wait for a TTS step
     };
+
+    const DEBUG_LESSON = (() => {
+        try {
+            return Boolean(window.__DEBUG_LESSON || localStorage.getItem('debugLesson') === 'true');
+        } catch (error) {
+            return Boolean(window.__DEBUG_LESSON);
+        }
+    })();
+
+    function debugLesson(event, data = {}) {
+        if (DEBUG_LESSON) {
+            const meta = {
+                screenReader: state?.settings?.screenReader ?? 'unknown',
+                lessonAudioEnabled: state?.settings?.lessonAudioEnabled ?? 'unknown',
+                activeEngine: typeof SpeechController !== 'undefined' ? SpeechController.getActiveEngine() : 'pre-init',
+                lessonStatus: typeof InstructionEngine !== 'undefined' ? InstructionEngine.lessonStatus : 'pre-init'
+            };
+            console.log('[lesson]', event, { ...data, _meta: meta });
+        }
+    }
 
     // ================================
     // State Management
@@ -32,18 +74,27 @@ injectSpeedInsights();
         // User profile
         profile: {
             name: '',
+            avatar: '🐶',
+            role: null,
+            brailleExperience: null,
+            learningGoals: [],
+            learningPreferences: [],
             ageRange: null,
-            createdAt: null
+            createdAt: null,
+            onboardingCompleted: false // Explicit flag for onboarding status
         },
 
         // Settings
         settings: {
             screenReader: false,
+            lessonAudioEnabled: true, // Lesson narration (separate from screenReader)
             hapticFeedback: true,
             highContrast: false,
             fontSize: 'large',
             audioSpeed: 1,
-            timedChallenges: false
+            timedChallenges: false,
+            reminders: true,
+            newsUpdates: false
         },
 
         // Progress
@@ -97,6 +148,8 @@ injectSpeedInsights();
     };
 
     let state = JSON.parse(JSON.stringify(defaultState));
+    // Track last successful cloud load to avoid overwriting remote data after a failed fetch
+    let lastCloudLoadSucceeded = true;
 
     // Load state from localStorage
     function loadState() {
@@ -104,24 +157,30 @@ injectSpeedInsights();
             const saved = localStorage.getItem('braillequest_state');
             if (saved) {
                 const parsed = JSON.parse(saved);
+                const { progress: mergedProgress, migrated } = migrateProgress(parsed.progress, defaultState.progress);
+
                 // Merge with defaults to handle new properties
                 state = {
                     ...defaultState,
                     ...parsed,
                     settings: { ...defaultState.settings, ...parsed.settings },
-                    progress: { ...defaultState.progress, ...parsed.progress },
+                    progress: mergedProgress,
                     pet: { ...defaultState.pet, ...parsed.pet },
                     session: { ...defaultState.session }
                 };
                 state.session.isFirstLaunch = false;
+
+                if (migrated) {
+                    saveState();
+                }
             }
         } catch (e) {
             console.error('Failed to load state:', e);
         }
     }
 
-    // Save state to localStorage (internal)
-    function _saveStateImmediate() {
+    // Save state to localStorage (internal) and sync to Supabase if authenticated
+    async function _saveStateImmediate() {
         try {
             const toSave = {
                 profile: state.profile,
@@ -131,6 +190,22 @@ injectSpeedInsights();
                 pet: state.pet
             };
             localStorage.setItem('braillequest_state', JSON.stringify(toSave));
+
+            // Sync to Supabase if user is authenticated and last cloud load succeeded
+            if (state.profile.supabaseUserId) {
+                if (!lastCloudLoadSucceeded) {
+                    console.warn('Skipping cloud sync: last cloud load failed');
+                } else {
+                    try {
+                        const dataSyncModule = await import('./src/lib/dataSync.js');
+                        await dataSyncModule.syncAllData(state, state.profile.supabaseUserId);
+                        console.log('✅ Synced to Supabase');
+                    } catch (syncError) {
+                        console.warn('Could not sync to Supabase:', syncError);
+                        // Continue - localStorage save succeeded
+                    }
+                }
+            }
         } catch (e) {
             console.error('Failed to save state:', e);
         }
@@ -152,132 +227,59 @@ injectSpeedInsights();
     // Audio Service
     // ================================
 
-    // LRU Cache for TTS audio (max 50 phrases)
-    const TTS_CACHE_MAX = 50;
-    const ttsCache = new Map();
-
-    function getTTSCacheKey(text, speed) {
-        return `${text}|${speed}`;
-    }
-
-    function addToTTSCache(key, audioBlob) {
-        if (ttsCache.size >= TTS_CACHE_MAX) {
-            // Remove oldest entry (first key in Map)
-            const firstKey = ttsCache.keys().next().value;
-            ttsCache.delete(firstKey);
-        }
-        ttsCache.set(key, audioBlob);
-    }
-
     const AudioService = {
         synth: window.speechSynthesis,
-        ttsServerUrl: '/api/tts',
-        ttsAvailable: null, // null = unknown, true/false after first check
         currentAudio: null,
         speakingPromise: null, // Track current speech completion
+        resolveSpeakingPromise: null,
+        _audioCtx: null, // Shared AudioContext to prevent memory leaks
+
+        // Get or create shared AudioContext (lazy initialization)
+        _getAudioContext() {
+            if (!this._audioCtx || this._audioCtx.state === 'closed') {
+                this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            // Resume if suspended (required by browser autoplay policies)
+            if (this._audioCtx.state === 'suspended') {
+                this._audioCtx.resume().catch(() => { });
+            }
+            return this._audioCtx;
+        },
 
         // Main speak method - interrupts current speech by default
         async speak(text, interrupt = true) {
-            // If screen reader is off AND not interrupting, skip but return resolved promise
-            if (!state.settings.screenReader && !interrupt) {
-                return Promise.resolve();
-            }
+            debugLesson('speak_entry', { text: text.substring(0, 40), interrupt });
 
-            // Stop any current audio
+            // Stop any current audio and cancel pending requests
             if (interrupt) {
                 this.stop();
             }
 
-            const cacheKey = getTTSCacheKey(text, state.settings.audioSpeed);
+            debugLesson('tts_start', {
+                text,
+                interrupt,
+                screenReader: state.settings.screenReader,
+                engine: 'native'
+            });
 
-            // Check cache first
-            if (ttsCache.has(cacheKey)) {
-                const cachedBlob = ttsCache.get(cacheKey);
-                const audioUrl = URL.createObjectURL(cachedBlob);
-                this.currentAudio = new Audio(audioUrl);
-
-                this.speakingPromise = new Promise(resolve => {
-                    this.currentAudio.onended = () => {
-                        this.speakingPromise = null;
-                        resolve();
-                    };
-                    this.currentAudio.onerror = () => {
-                        this.speakingPromise = null;
-                        resolve();
-                    };
-                });
-
-                this.currentAudio.play();
-                return this.speakingPromise;
-            }
-
-            // Try Google Cloud TTS if available or unknown
-            if (this.ttsAvailable !== false) {
-                try {
-                    const response = await fetch(this.ttsServerUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            text,
-                            voice: 'es-US-Neural2-B', // US Spanish Neural voice
-                            speakingRate: state.settings.audioSpeed
-                        })
-                    });
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.audioContent) {
-                            this.ttsAvailable = true;
-                            const audioBlob = this._base64ToBlob(data.audioContent, 'audio/mp3');
-
-                            // Cache the audio blob for future use
-                            addToTTSCache(cacheKey, audioBlob);
-
-                            const audioUrl = URL.createObjectURL(audioBlob);
-                            this.currentAudio = new Audio(audioUrl);
-
-                            // Create a promise that resolves when audio ends
-                            this.speakingPromise = new Promise(resolve => {
-                                this.currentAudio.onended = () => {
-                                    this.speakingPromise = null;
-                                    resolve();
-                                };
-                                this.currentAudio.onerror = () => {
-                                    this.speakingPromise = null;
-                                    resolve();
-                                };
-                            });
-
-                            this.currentAudio.play();
-                            return this.speakingPromise;
-                        }
-                    }
-
-                    // If we get here, TTS failed - fall back
-                    this.ttsAvailable = false;
-                } catch (error) {
-                    // Server not available, mark as unavailable
-                    this.ttsAvailable = false;
-                    console.log('TTS server unavailable, using Web Speech API');
-                }
-            }
-
-            // Fallback to Web Speech API
+            // Use native Web Speech API directly
             return this._speakWithWebSpeech(text);
         },
 
         // Speak and wait for completion - use this to prevent overlaps
         async speakAndWait(text) {
-            // speak() now always returns a promise (resolved immediately if skipping)
             const speakResult = this.speak(text, true);
             await speakResult;
-            // Also wait for any remaining speakingPromise
             if (this.speakingPromise) {
                 await this.speakingPromise;
             }
         },
 
         _speakWithWebSpeech(text) {
+            if (!this.synth || typeof SpeechSynthesisUtterance === 'undefined') {
+                debugLesson('tts_webspeech_unavailable', { text });
+                return Promise.resolve();
+            }
             if (this.synth.speaking) {
                 this.synth.cancel();
             }
@@ -290,13 +292,33 @@ injectSpeedInsights();
 
             // Return a promise that resolves when speech ends
             this.speakingPromise = new Promise(resolve => {
+                this.resolveSpeakingPromise = resolve;
+                // Safety timeout for Web Speech
+                const safetyTimeout = setTimeout(() => {
+                    debugLesson('tts_webspeech_safety_timeout', { text: text.substring(0, 20) });
+                    if (this.resolveSpeakingPromise === resolve) {
+                        this.resolveSpeakingPromise();
+                        this.resolveSpeakingPromise = null;
+                        this.speakingPromise = null;
+                        if (this.synth.speaking) this.synth.cancel();
+                    }
+                }, 10000);
+
                 utterance.onend = () => {
-                    this.speakingPromise = null;
-                    resolve();
+                    clearTimeout(safetyTimeout);
+                    if (this.resolveSpeakingPromise === resolve) {
+                        this.resolveSpeakingPromise = null;
+                        this.speakingPromise = null;
+                        resolve();
+                    }
                 };
                 utterance.onerror = () => {
-                    this.speakingPromise = null;
-                    resolve();
+                    clearTimeout(safetyTimeout);
+                    if (this.resolveSpeakingPromise === resolve) {
+                        this.resolveSpeakingPromise = null;
+                        this.speakingPromise = null;
+                        resolve();
+                    }
                 };
             });
 
@@ -305,10 +327,20 @@ injectSpeedInsights();
         },
 
         stop() {
-            this.synth.cancel();
+            if (this.synth && typeof this.synth.cancel === 'function') {
+                this.synth.cancel();
+            }
             if (this.currentAudio) {
                 this.currentAudio.pause();
                 this.currentAudio = null;
+            }
+            if (this.abortController) {
+                this.abortController.abort();
+                this.abortController = null;
+            }
+            if (this.resolveSpeakingPromise) {
+                this.resolveSpeakingPromise();
+                this.resolveSpeakingPromise = null;
             }
             this.speakingPromise = null;
         },
@@ -324,8 +356,8 @@ injectSpeedInsights();
         },
 
         playSound(type) {
-            // Create simple sounds using Web Audio API
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // Use shared AudioContext to prevent memory leaks (browsers limit to ~6 instances)
+            const audioCtx = this._getAudioContext();
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
 
@@ -400,11 +432,6 @@ injectSpeedInsights();
         },
 
         registerServiceWorker() {
-            // No registrar SW en localhost para evitar problemas de caché durante el desarrollo
-            if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-                console.log('SW registration skipped on localhost for better dev experience');
-                return;
-            }
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/service-worker.js')
                     .then(reg => console.log('SW Registered', reg))
@@ -466,11 +493,21 @@ injectSpeedInsights();
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
                 window.navigator.standalone === true;
 
-            if (isStandalone) {
+            // Check if iOS
+            const ua = window.navigator.userAgent;
+            const isIOS = /iPhone|iPad|iPod/.test(ua);
+
+            // Check if install modal was already shown (desktop only)
+            const installModalShown = localStorage.getItem('braillito_install_modal_shown');
+
+            if (isStandalone || isIOS || installModalShown) {
+                // Skip install gate for standalone mode, iOS devices, or if already shown
                 this.hideGate();
             } else {
                 this.showGate();
                 this.detectPlatform();
+                // Mark as shown so it won't appear again on refresh
+                localStorage.setItem('braillito_install_modal_shown', 'true');
             }
         },
 
@@ -555,6 +592,288 @@ injectSpeedInsights();
     };
 
     // ================================
+    // Typewriter Controller
+    // ================================
+
+    const TypewriterController = (() => {
+        let currentInterval = null;
+        let currentElement = null;
+        let currentMessages = [];
+        let currentMessageIndex = 0;
+        let currentCharIndex = 0;
+        let fullText = '';
+        let isTyping = false;
+        let onComplete = null;
+        let tapHandler = null;
+        const DEFAULT_SPEED = 40; // ms per character (30-50 range)
+
+        function start(element, messages, options = {}) {
+            // Stop any existing typewriter
+            stop();
+
+            if (!element || !messages || messages.length === 0) return;
+
+            currentElement = element;
+            currentMessages = Array.isArray(messages) ? messages : [messages];
+            currentMessageIndex = 0;
+            const speed = options.speed || DEFAULT_SPEED;
+            onComplete = options.onComplete || null;
+
+            // Reserve layout space with invisible placeholder
+            fullText = currentMessages[0];
+            element.style.visibility = 'hidden';
+            element.textContent = fullText;
+            element.offsetHeight; // force layout
+            element.style.visibility = 'visible';
+            element.textContent = '';
+
+            // Attach tap handler to bubble container
+            const container = element.closest('.puppy-bubble, .lesson-speech-bubble, .mascot-speech-bubble');
+            if (container) {
+                tapHandler = () => handleTap();
+                container.addEventListener('click', tapHandler);
+                container._typewriterContainer = true;
+            }
+
+            startTyping(speed);
+        }
+
+        function startTyping(speed) {
+            currentCharIndex = 0;
+            fullText = currentMessages[currentMessageIndex];
+
+            // Reserve space for new message
+            if (currentElement) {
+                currentElement.style.visibility = 'hidden';
+                currentElement.textContent = fullText;
+                currentElement.offsetHeight;
+                currentElement.style.visibility = 'visible';
+                currentElement.textContent = '';
+            }
+
+            isTyping = true;
+
+            currentInterval = setInterval(() => {
+                if (currentCharIndex < fullText.length) {
+                    currentElement.textContent = fullText.substring(0, currentCharIndex + 1);
+                    currentCharIndex++;
+                } else {
+                    clearInterval(currentInterval);
+                    currentInterval = null;
+                    isTyping = false;
+                    if (onComplete) onComplete(currentMessageIndex, currentMessages.length);
+                }
+            }, speed);
+        }
+
+        function handleTap() {
+            if (!currentElement) return false;
+
+            if (isTyping) {
+                // Complete current message instantly
+                clearInterval(currentInterval);
+                currentInterval = null;
+                currentElement.textContent = fullText;
+                isTyping = false;
+                if (onComplete) onComplete(currentMessageIndex, currentMessages.length);
+                return true;
+            } else if (currentMessageIndex < currentMessages.length - 1) {
+                // Advance to next message
+                currentMessageIndex++;
+                startTyping(DEFAULT_SPEED);
+                return true;
+            }
+            return false; // No more messages
+        }
+
+        function stop() {
+            if (currentInterval) {
+                clearInterval(currentInterval);
+                currentInterval = null;
+            }
+
+            // Remove tap handler from container
+            if (currentElement && tapHandler) {
+                const container = currentElement.closest('.puppy-bubble, .lesson-speech-bubble, .mascot-speech-bubble');
+                if (container) {
+                    container.removeEventListener('click', tapHandler);
+                }
+            }
+
+            isTyping = false;
+            currentElement = null;
+            currentMessages = [];
+            currentMessageIndex = 0;
+            currentCharIndex = 0;
+            fullText = '';
+            onComplete = null;
+            tapHandler = null;
+        }
+
+        function isActive() {
+            return currentElement !== null;
+        }
+
+        return { start, stop, handleTap, isActive };
+    })();
+
+    // ================================
+    // Speech Controller (Single Source of Truth)
+    // ================================
+
+    const SpeechController = {
+        /**
+         * Get the active speech engine based on current settings
+         * @returns {'screenReader' | 'lesson' | 'none'}
+         */
+        getActiveEngine() {
+            if (state.settings.screenReader) return 'screenReader';
+            if (state.settings.lessonAudioEnabled) return 'lesson';
+            return 'none';
+        },
+
+        /**
+         * Check if lesson audio should play
+         * Lesson audio is only enabled when:
+         * 1. Screen reader is OFF (to prevent overlap)
+         * 2. Lesson audio preference is ON
+         */
+        isLessonAudioEnabled() {
+            return !state.settings.screenReader && state.settings.lessonAudioEnabled;
+        },
+
+        /**
+         * Check if speech should be used for lesson narration
+         * Returns true for BOTH screenReader mode and lessonAudio mode
+         * Only returns false when engine is 'none'
+         */
+        shouldSpeakForLesson() {
+            const engine = this.getActiveEngine();
+            debugLesson('shouldSpeakForLesson', { engine, result: engine !== 'none' });
+            return engine !== 'none';
+        },
+
+        /**
+         * Ensure lesson audio is ON by default when screen reader is off.
+         * Useful to keep narration active even if the user disables the reader.
+         */
+        ensureLessonAudioEnabled(reason = 'auto') {
+            // Auto-enable lesson audio in these cases:
+            // 1. 'init' - App initialization (ensure audio is enabled by default)
+            // 2. 'mode_switch' - User toggled screen reader OFF (re-enable lesson audio)
+            //
+            // Only acts when screenReader is OFF and lessonAudioEnabled is currently OFF.
+            // This respects user preference if they explicitly turned it off during a session.
+            const shouldAutoEnable = (reason === 'init' || reason === 'mode_switch') &&
+                !state.settings.screenReader &&
+                !state.settings.lessonAudioEnabled;
+
+            if (shouldAutoEnable) {
+                state.settings.lessonAudioEnabled = true;
+                debugLesson('lesson_audio_auto_enable', { reason });
+                saveState();
+                this.updateToggleUI();
+            }
+        },
+
+        /**
+         * Toggle lesson audio on/off
+         */
+        toggleLessonAudio() {
+            state.settings.lessonAudioEnabled = !state.settings.lessonAudioEnabled;
+            saveState();
+            this.updateToggleUI();
+            // Stop current audio if turning off
+            if (!state.settings.lessonAudioEnabled) {
+                AudioService.stop();
+            }
+        },
+
+        /**
+         * Update all audio toggle button UIs to reflect current state
+         */
+        updateToggleUI() {
+            const toggles = document.querySelectorAll('.lesson-audio-toggle');
+            toggles.forEach(btn => {
+                const icon = btn.querySelector('.material-symbols-outlined');
+                if (icon) {
+                    icon.textContent = state.settings.lessonAudioEnabled ? 'volume_up' : 'volume_off';
+                }
+                btn.setAttribute('aria-checked', String(state.settings.lessonAudioEnabled));
+            });
+        }
+    };
+
+    // ================================
+    // Lesson Pacer (Deterministic Timing)
+    // ================================
+
+    const LessonPacer = {
+        pendingTimerId: null,
+
+        /**
+         * Estimate speech duration for a text string
+         * @param {string} text - Text to estimate
+         * @returns {number} Duration in milliseconds
+         */
+        estimateSpeechDuration(text) {
+            // ~150 words per minute at rate 1.0, adjusted by audioSpeed
+            const wordsPerMin = 150 / state.settings.audioSpeed;
+            const words = text.split(/\s+/).length;
+            const baseDuration = (words / wordsPerMin) * 60 * 1000;
+
+            // Add punctuation pauses
+            const commas = (text.match(/,/g) || []).length * 150;
+            const periods = (text.match(/[.!?]/g) || []).length * 300;
+
+            return Math.max(baseDuration + commas + periods, 400);
+        },
+
+        /**
+         * Cancel any pending pacing timer
+         */
+        cancel() {
+            if (this.pendingTimerId) {
+                clearTimeout(this.pendingTimerId);
+                this.pendingTimerId = null;
+            }
+        },
+
+        /**
+         * Pace the lesson step - either with audio or silent timing
+         * @param {string} text - Text to speak/pace
+         * @returns {Promise<void>}
+         */
+        async pace(text) {
+            // Use shouldSpeakForLesson() to include BOTH screenReader and lesson modes
+            const shouldSpeak = SpeechController.shouldSpeakForLesson();
+            const estimatedDuration = this.estimateSpeechDuration(text);
+            debugLesson('pacer_pace', { text: text.substring(0, 40), shouldSpeak, estimatedDuration });
+
+            if (shouldSpeak) {
+                // Use actual TTS
+                const startTime = Date.now();
+                await AudioService.speakAndWait(text);
+                const elapsed = Date.now() - startTime;
+
+                // If TTS was faster than estimated, wait the difference for consistency
+                if (elapsed < estimatedDuration) {
+                    await new Promise(resolve => {
+                        this.pendingTimerId = setTimeout(resolve, estimatedDuration - elapsed);
+                    });
+                    this.pendingTimerId = null;
+                }
+            } else {
+                // Silent mode: just wait the estimated duration
+                await new Promise(resolve => {
+                    this.pendingTimerId = setTimeout(resolve, estimatedDuration);
+                });
+                this.pendingTimerId = null;
+            }
+        }
+    };
+
+    // ================================
     // Instruction Engine
     // ================================
 
@@ -562,25 +881,200 @@ injectSpeedInsights();
         currentLevel: null,
         currentLetterIdx: 0,
         isAnimationRunning: false,
-        animationTimeout: null,
+        currentRunId: 0,
+        lessonStatus: 'idle',
+        lessonInitToken: 0,
+        lessonInitRetryCount: 0,
+        initWatchdogId: null,
+        hasStartedOnce: false,
 
-        start(level) {
+        start(level, options = {}) {
+            this.startLesson(level, { reason: options.reason || 'auto' });
+        },
+
+        startLesson(level, options = {}) {
+            const { reason = 'auto', force = false, keepRetry = false } = options;
+            if (!level) {
+                this._setLessonStatus('error', { reason: 'missing_level', source: reason });
+                return;
+            }
+
+            // Only auto-enable if we are switching modes or if it's a first-time lesson start
+            // and NOT every time a lesson starts, to respect user preference of turning it off.
+            // SpeechController.ensureLessonAudioEnabled('startLesson');
+
+            if (!force &&
+                (this.lessonStatus === 'loading' || this.lessonStatus === 'ready') &&
+                this.currentLevel &&
+                this.currentLevel.id === level.id) {
+                debugLesson('lesson_init_skipped', { reason, lessonId: level.id, status: this.lessonStatus });
+                return;
+            }
+
+            debugLesson('lesson_init', {
+                reason,
+                lessonId: level.id,
+                userId: state.profile.supabaseUserId || null,
+                progress: {
+                    totalXP: state.progress.totalXP,
+                    levelsCompleted: state.progress.levelsCompleted.length
+                }
+            });
+
+            if (!keepRetry) {
+                this.lessonInitRetryCount = 0;
+            }
+            this.lessonInitToken += 1;
+            const initToken = this.lessonInitToken;
+
+            if (state.session.currentScreen === 'instruction-screen') {
+                this.stop();
+            } else {
+                navigateTo('instruction-screen');
+            }
+
             this.currentLevel = level;
             this.currentLetterIdx = 0;
-            this.stopCurrentAnimation(); // New: cleanup previous runs
-            navigateTo('instruction-screen');
-            this.setupProgressDots();
+            this.hasStartedOnce = false;
+            this._setLessonStatus('loading', { reason, initToken, lessonId: level.id });
+            this._resetInitUi();
+
+            // Update title to show current level info
+            const titleEl = document.querySelector('.lesson-phase-title');
+            if (titleEl) {
+                titleEl.textContent = `Observa: ${level.title}`;
+            }
+
+            try {
+                this.setupProgressDots();
+                this.clearDots();
+            } catch (error) {
+                debugLesson('lesson_init_error', { error: error?.message || error });
+                this._setLessonStatus('error', { reason: 'init_exception', initToken });
+                return;
+            }
+
+            this._startInitWatchdog(initToken);
             this.playNextLetter();
         },
 
-        stopCurrentAnimation() {
+        stop() {
             this.isAnimationRunning = false;
-            if (this.animationTimeout) {
-                clearTimeout(this.animationTimeout);
-                this.animationTimeout = null;
-            }
+            this.currentRunId++; // Invalidate current run
+            clearTimeout(this.animationTimeout);
+            this._clearInitWatchdog();
+            this.hasStartedOnce = false;
             AudioService.stop();
+            LessonPacer.cancel(); // Cancel any pending pacing timers
+            if (this.lessonStatus !== 'idle') {
+                this._setLessonStatus('idle', { reason: 'stop' });
+            }
         },
+
+        _setLessonStatus(status, meta = {}) {
+            const prev = this.lessonStatus;
+            if (prev !== status || meta.force) {
+                this.lessonStatus = status;
+                debugLesson('lesson_status', { from: prev, to: status, ...meta });
+            }
+            if (status === 'ready' || status === 'error') {
+                this._clearInitWatchdog();
+            }
+            if (status === 'error') {
+                this._showInitError();
+            }
+        },
+
+        _startInitWatchdog(initToken) {
+            this._clearInitWatchdog();
+            this.initWatchdogId = setTimeout(() => {
+                if (this.lessonInitToken !== initToken) return;
+                if (this.lessonStatus !== 'loading') return;
+
+                if (this.lessonInitRetryCount < 1 && this.currentLevel) {
+                    this.lessonInitRetryCount += 1;
+                    debugLesson('lesson_init_retry', {
+                        lessonId: this.currentLevel.id,
+                        retryCount: this.lessonInitRetryCount
+                    });
+                    this.startLesson(this.currentLevel, { reason: 'watchdog-retry', force: true, keepRetry: true });
+                    return;
+                }
+
+                this._setLessonStatus('error', { reason: 'watchdog-timeout', initToken });
+            }, TIMING.LESSON_INIT_TIMEOUT);
+        },
+
+        _clearInitWatchdog() {
+            if (this.initWatchdogId) {
+                clearTimeout(this.initWatchdogId);
+                this.initWatchdogId = null;
+            }
+        },
+
+        _resetInitUi() {
+            const repeatBtn = document.getElementById('instruction-repeat-btn');
+            if (repeatBtn) repeatBtn.textContent = 'REPETIR';
+
+            const nextBtn = document.getElementById('instruction-next-btn');
+            if (nextBtn) {
+                nextBtn.textContent = 'SIGUIENTE';
+                nextBtn.disabled = false;
+            }
+
+            const letterSpan = document.getElementById('instruction-letter');
+            if (letterSpan) letterSpan.textContent = '...';
+
+            const instructionText = document.getElementById('instruction-text');
+            if (instructionText) instructionText.textContent = 'Preparando la lección';
+
+            const progressBar = document.getElementById('lesson-progress-bar');
+            if (progressBar) progressBar.style.width = '0%';
+        },
+
+        _showInitError() {
+            const titleEl = document.querySelector('.lesson-phase-title');
+            if (titleEl) titleEl.textContent = 'No pudimos iniciar la lección';
+
+            const repeatBtn = document.getElementById('instruction-repeat-btn');
+            if (repeatBtn) repeatBtn.textContent = 'REINTENTAR';
+
+            const nextBtn = document.getElementById('instruction-next-btn');
+            if (nextBtn) nextBtn.disabled = true;
+
+            const instructionText = document.getElementById('instruction-text');
+            if (instructionText) {
+                instructionText.textContent = 'No pudimos iniciar la lección. Presiona Reintentar.';
+            }
+        },
+
+        async _safeSpeakAndWait(text, meta = {}) {
+            // Use LessonPacer for deterministic timing (audio ON or OFF)
+            let timeoutId;
+            const timeoutPromise = new Promise(resolve => {
+                timeoutId = setTimeout(() => resolve('timeout'), TIMING.AUDIO_STEP_TIMEOUT);
+            });
+
+            try {
+                const result = await Promise.race([
+                    LessonPacer.pace(text),
+                    timeoutPromise
+                ]);
+
+                if (result === 'timeout') {
+                    debugLesson('pacer_timeout', { text, ...meta });
+                    AudioService.stop();
+                    LessonPacer.cancel();
+                }
+            } catch (error) {
+                debugLesson('pacer_error', { error: error?.message || error, ...meta });
+                AudioService.stop();
+                LessonPacer.cancel();
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        },
+
 
         setupProgressDots() {
             const container = document.getElementById('instruction-progress-dots');
@@ -603,6 +1097,11 @@ injectSpeedInsights();
         },
 
         async playNextLetter() {
+            if (!this.currentLevel || !Array.isArray(this.currentLevel.letters)) {
+                this._setLessonStatus('error', { reason: 'missing_level' });
+                return;
+            }
+
             if (this.currentLetterIdx >= this.currentLevel.letters.length) {
                 this.finish();
                 return;
@@ -638,10 +1137,34 @@ injectSpeedInsights();
                 mainLabel = char;
             }
 
-            // Toggle single/dual cell display - show/hide prefix cell
-            if (container) {
-                container.classList.toggle('single-cell', !isMultiCell);
+            if (!container || !mainCell || (isMultiCell && !prefixCell)) {
+                this._setLessonStatus('error', { reason: 'missing_dom', lessonId: this.currentLevel.id });
+                return;
             }
+
+            if (this.lessonStatus === 'loading') {
+                this._setLessonStatus('ready', {
+                    lessonId: this.currentLevel.id,
+                    stepIndex: this.currentLetterIdx
+                });
+            }
+
+            if (!this.hasStartedOnce) {
+                this.hasStartedOnce = true;
+                debugLesson('lesson_started', {
+                    lessonId: this.currentLevel.id,
+                    stepIndex: this.currentLetterIdx
+                });
+            }
+
+            debugLesson('lesson_step', {
+                lessonId: this.currentLevel.id,
+                stepIndex: this.currentLetterIdx,
+                letter: char
+            });
+
+            // Toggle single/dual cell display - show/hide prefix cell
+            container.classList.toggle('single-cell', !isMultiCell);
             if (prefixCell) {
                 prefixCell.classList.toggle('hidden', !isMultiCell);
             }
@@ -664,7 +1187,30 @@ injectSpeedInsights();
                 lessonProgressBar.style.width = `${progressPercent}%`;
             }
 
-            document.getElementById('instruction-text').textContent = `Aprendamos: ${char}...`;
+            // Generate position-based intro phrase
+            const getIntroPhrase = (char, idx, total) => {
+                if (idx === 0) {
+                    return `Comencemos con la ${char}`;
+                } else if (idx === total - 1) {
+                    return `Y por último, la ${char}`;
+                } else {
+                    // Rotate through middle phrases
+                    const middlePhrases = [
+                        `Ahora, la ${char}`,
+                        `Siguiente: ${char}`,
+                        `Vamos con la ${char}`,
+                        `Continuamos con la ${char}`
+                    ];
+                    return middlePhrases[(idx - 1) % middlePhrases.length];
+                }
+            };
+
+            const introPhrase = getIntroPhrase(char, this.currentLetterIdx, this.currentLevel.letters.length);
+
+            const instructionText = document.getElementById('instruction-text');
+            if (instructionText) {
+                instructionText.textContent = `${introPhrase}...`;
+            }
             // Buttons now stay visible during animation
 
             this.updateProgressDots();
@@ -672,74 +1218,92 @@ injectSpeedInsights();
 
             this.isAnimationRunning = true;
             const currentIdx = this.currentLetterIdx;
+            const runId = this.currentRunId;
+            const initToken = this.lessonInitToken;
+            const isStale = () => (
+                !this.isAnimationRunning ||
+                this.currentLetterIdx !== currentIdx ||
+                this.currentRunId !== runId ||
+                this.lessonInitToken !== initToken
+            );
 
             // Speak intro - Buddy's message appears at the SAME TIME as the audio
-            const introMsg = `Vamos a aprender: ${char}`;
-            showPuppyMessage(introMsg);
-            await AudioService.speakAndWait(introMsg);
+            showPuppyMessage(introPhrase);
+            await this._safeSpeakAndWait(introPhrase, { phase: 'intro', lessonId: this.currentLevel.id });
+            if (isStale()) return;
             await new Promise(r => setTimeout(r, TIMING.INTRO_PAUSE));
 
-            if (!this.isAnimationRunning || this.currentLetterIdx !== currentIdx) return;
+            if (isStale()) return;
 
             // Animate prefix cell dots (if applicable)
             if (isMultiCell && prefixDots) {
-                await AudioService.speakAndWait(prefixLabel === 'Mayúscula' ? 'Signo de mayúscula' : 'Signo de número');
+                await this._safeSpeakAndWait(
+                    prefixLabel === 'Mayúscula' ? 'Signo de mayúscula' : 'Signo de número',
+                    { phase: 'prefix_label', lessonId: this.currentLevel.id }
+                );
+                if (isStale()) return;
                 for (const dotNum of prefixDots) {
-                    if (!this.isAnimationRunning || this.currentLetterIdx !== currentIdx) return;
+                    if (isStale()) return;
                     const dotEl = prefixCell.querySelector(`[data-dot="${dotNum}"]`);
                     if (dotEl) {
                         dotEl.classList.add('animating');
                         HapticService.tap();
                         await new Promise(r => setTimeout(r, TIMING.PREFIX_DOT));
+                        if (isStale()) return;
                         dotEl.classList.remove('animating');
                         dotEl.classList.add('filled');
                     }
                 }
                 await new Promise(r => setTimeout(r, TIMING.INTER_CELL));
+                if (isStale()) return;
             }
 
-            if (!this.isAnimationRunning || this.currentLetterIdx !== currentIdx) return;
+            if (isStale()) return;
 
             // Animate main cell dots
-            await AudioService.speakAndWait(`Letra ${mainLabel}`);
+            await this._safeSpeakAndWait(`Letra ${mainLabel}`, { phase: 'main_label', lessonId: this.currentLevel.id });
+            if (isStale()) return;
             for (const dotNum of mainDots) {
-                if (!this.isAnimationRunning || this.currentLetterIdx !== currentIdx) return;
+                if (isStale()) return;
                 const dotEl = mainCell.querySelector(`[data-dot="${dotNum}"]`);
                 if (dotEl) {
                     dotEl.classList.add('animating');
                     const pos = BrailleData.DOT_POSITIONS[dotNum];
-                    await AudioService.speakAndWait(`Punto ${dotNum}, ${pos}`);
+                    await this._safeSpeakAndWait(`Punto ${dotNum}, ${pos}`, {
+                        phase: 'main_dot',
+                        lessonId: this.currentLevel.id
+                    });
+                    if (isStale()) return;
                     HapticService.tap();
                     await new Promise(r => setTimeout(r, TIMING.MAIN_DOT));
+                    if (isStale()) return;
                     dotEl.classList.remove('animating');
                     dotEl.classList.add('filled');
                 }
                 await new Promise(r => setTimeout(r, TIMING.DOT_GAP));
+                if (isStale()) return;
             }
 
-            if (!this.isAnimationRunning || this.currentLetterIdx !== currentIdx) return;
+            if (isStale()) return;
 
             const desc = BrailleData.getDotsDescription(char);
             const buddyMsg = `${char} es ${desc}`;
-            document.getElementById('instruction-text').textContent = buddyMsg;
+            if (instructionText) {
+                instructionText.textContent = buddyMsg;
+            }
             showPuppyMessage(buddyMsg); // Buddy talks in instruction screen
-            await AudioService.speakAndWait(buddyMsg);
+            await this._safeSpeakAndWait(buddyMsg, { phase: 'desc', lessonId: this.currentLevel.id });
+            if (isStale()) return;
 
-            this.isAnimationRunning = false;
-
-            // Show continue button or auto-advance
+            // If it's the last letter, change button text
             const nextBtn = document.getElementById('instruction-next-btn');
-            const repeatBtn = document.getElementById('instruction-repeat-btn');
-
             if (nextBtn) {
                 if (this.currentLetterIdx === this.currentLevel.letters.length - 1) {
-                    nextBtn.textContent = "Iniciar Lección";
+                    nextBtn.textContent = "INICIAR LECCIÓN";
                 } else {
-                    nextBtn.textContent = "Siguiente";
+                    nextBtn.textContent = "SIGUIENTE";
                 }
-                nextBtn.classList.remove('hidden');
             }
-            if (repeatBtn) repeatBtn.classList.remove('hidden');
 
             // Auto-advance after 8 seconds if not clicked
             this.animationTimeout = setTimeout(() => {
@@ -751,7 +1315,7 @@ injectSpeedInsights();
 
         clearDots() {
             document.querySelectorAll('#instruction-cell-prefix [data-dot], #instruction-cell [data-dot]').forEach(d => {
-                d.classList.remove('filled', 'animating');
+                d.classList.remove('filled', 'active', 'animating');
             });
         },
 
@@ -765,14 +1329,11 @@ injectSpeedInsights();
 
         repeat() {
             clearTimeout(this.animationTimeout);
-            this.isAnimationRunning = false;
-            // Stop any current speech
-            AudioService.stop();
-            this.clearDots(); // Clear dots before repeating
-            // Reset to first letter and start from beginning
-            this.currentLetterIdx = 0;
-            this.setupProgressDots();
-            this.playNextLetter();
+            if (!this.currentLevel) {
+                this._setLessonStatus('error', { reason: 'missing_level', source: 'repeat' });
+                return;
+            }
+            this.startLesson(this.currentLevel, { reason: 'repeat', force: true });
         },
 
         skip() {
@@ -782,6 +1343,7 @@ injectSpeedInsights();
         },
 
         finish() {
+            this._setLessonStatus('idle', { reason: 'finish', force: true });
             GameEngine.startLevel(this.currentLevel.id, true); // true = skipIntro
         }
     };
@@ -791,56 +1353,99 @@ injectSpeedInsights();
     // ================================
 
     function navigateTo(screenId) {
-        // Hide all screens
-        document.querySelectorAll('.screen').forEach(screen => {
-            screen.classList.remove('active');
-        });
+        // Clear focus from current element before navigating to prevent "sticky" rings
+        if (document.activeElement && document.activeElement !== document.body) {
+            document.activeElement.blur();
+        }
 
-        // Show target screen
-        const targetScreen = document.getElementById(screenId);
-        if (targetScreen) {
-            targetScreen.classList.add('active');
-            state.session.currentScreen = screenId;
-
-            // Update Navigation Bar Visibility
-            const mainNav = document.getElementById('main-nav');
-            const mainScreens = ['dashboard-screen', 'levels-screen', 'practice-screen', 'progress-screen', 'settings-screen'];
-
-            if (mainNav) {
-                if (mainScreens.includes(screenId)) {
-                    mainNav.classList.remove('hidden');
-                    // Update active state in nav (support both old and new classes)
-                    const navItems = Array.from(document.querySelectorAll('.nav-item, .nav-tab'));
-                    navItems.forEach((item) => {
-                        const isActive = item.dataset.screen === screenId;
-                        item.classList.toggle('active', isActive);
-
-                        // Update icon wrap active state for new nav tabs
-                        const iconWrap = item.querySelector('.nav-tab-icon-wrap');
-                        if (iconWrap) {
-                            iconWrap.classList.toggle('active', isActive);
-                        }
-                    });
-                } else {
-                    mainNav.classList.add('hidden');
-                }
+        // Small delay to clear focus again after screen change, helpful for some mobile browsers
+        setTimeout(() => {
+            if (document.activeElement &&
+                !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+                document.activeElement.blur();
             }
+        }, 50);
 
-            // Focus management for accessibility
-            const firstFocusable = targetScreen.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-            if (firstFocusable) {
-                setTimeout(() => firstFocusable.focus(), 100);
-            }
+        // Stop any active instruction animations
+        InstructionEngine.stop();
 
-            // Announce screen change with sound
-            if (state.settings.screenReader) {
-                AudioService.playSound('navigate');
-                const title = targetScreen.querySelector('h1, h2');
-                if (title) {
-                    AudioService.speak(title.textContent);
+        // Stop any active typewriter animation
+        TypewriterController.stop();
+
+        // AUTH GUARD: Prevent unauthorized access to protected screens
+        const protectedScreens = ['dashboard-screen', 'profile-screen', 'levels-screen', 'games-screen', 'practice-screen', 'progress-screen', 'settings-screen'];
+        if (protectedScreens.includes(screenId)) {
+            // Allow if authenticated OR if it's the specific onboarding screen flow
+            // But strictly block navigation if not logged in
+            if (!state.session.isAuthenticated && !state.profile.supabaseUserId) {
+                // Exception: Guest mode (if implemented later) - for now, strict block
+                // Only redirect if NOT already on welcome or auth
+                if (screenId !== 'welcome-screen' && screenId !== 'auth-screen') {
+                    console.warn(`🛑 Blocked navigation to ${screenId} - User not authenticated`);
+                    screenId = 'welcome-screen'; // Override destination
                 }
             }
         }
+
+        // Defensive cleanup: explicitly hide ALL screens
+        document.querySelectorAll('.screen').forEach(screen => {
+            screen.classList.remove('active');
+            // Clear any inline styles that might interfere
+            screen.style.display = '';
+            screen.style.visibility = '';
+            screen.style.opacity = '';
+        });
+
+        // Set state synchronously before animation frame to avoid race conditions with showPuppyMessage
+        state.session.currentScreen = screenId;
+
+        // Small delay to ensure cleanup completes before showing new screen
+        requestAnimationFrame(() => {
+            // Show target screen
+            const targetScreen = document.getElementById(screenId);
+            if (targetScreen) {
+                targetScreen.classList.add('active');
+
+                // Update Navigation Bar Visibility
+                const mainNav = document.getElementById('main-nav');
+                const mainScreens = ['dashboard-screen', 'levels-screen', 'games-screen', 'practice-screen', 'progress-screen', 'settings-screen'];
+
+                if (mainNav) {
+                    if (mainScreens.includes(screenId)) {
+                        mainNav.classList.remove('hidden');
+                        // Update active state in nav (support both old and new classes)
+                        const navItems = Array.from(document.querySelectorAll('.nav-item, .nav-tab'));
+                        navItems.forEach((item) => {
+                            const isActive = item.dataset.screen === screenId;
+                            item.classList.toggle('active', isActive);
+
+                            // Update icon wrap active state for new nav tabs
+                            const iconWrap = item.querySelector('.nav-tab-icon-wrap');
+                            if (iconWrap) {
+                                iconWrap.classList.toggle('active', isActive);
+                            }
+                        });
+                    } else {
+                        mainNav.classList.add('hidden');
+                    }
+                }
+
+                // Focus management for accessibility
+                const firstFocusable = targetScreen.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (firstFocusable) {
+                    setTimeout(() => firstFocusable.focus(), 100);
+                }
+
+                // Announce screen change with sound
+                if (state.settings.screenReader) {
+                    AudioService.playSound('navigate');
+                    const title = targetScreen.querySelector('h1, h2');
+                    if (title) {
+                        AudioService.speak(title.textContent);
+                    }
+                }
+            }
+        });
     }
 
     // ================================
@@ -856,8 +1461,19 @@ injectSpeedInsights();
         hintsUsed: 0,
         startTime: null,
         questions: [],
+        feedbackProcessing: false,
+        buildInstructionShown: false,
 
         startLevel(levelOrId, skipIntro = false) {
+            // Stop any active instruction animations
+            InstructionEngine.stop();
+
+            debugLesson('start_level_called', {
+                levelOrId,
+                skipIntro,
+                userId: state.profile.supabaseUserId || null
+            });
+
             let level;
             if (typeof levelOrId === 'string') {
                 level = BrailleData.LEVELS.find(l => l.id === levelOrId);
@@ -868,11 +1484,20 @@ injectSpeedInsights();
             } else {
                 level = levelOrId;
             }
-            if (!level) return;
+            if (!level) {
+                debugLesson('start_level_missing', { levelOrId });
+                return;
+            }
+
+            debugLesson('start_level_resolved', {
+                lessonId: level.id,
+                gameType: level.gameType,
+                skipIntro
+            });
 
             // Start instruction phase first if this is a lesson and intro not skipped
             if (level.id !== 'daily' && level.id !== 'practice' && !skipIntro) {
-                InstructionEngine.start(level);
+                InstructionEngine.startLesson(level, { reason: 'start-level' });
                 return;
             }
 
@@ -883,6 +1508,7 @@ injectSpeedInsights();
             this.correctAnswers = 0;
             this.hintsUsed = 0;
             this.startTime = Date.now();
+            this.buildInstructionShown = false;
 
             // Generate questions
             this.questions = this.generateQuestions(level);
@@ -948,9 +1574,10 @@ injectSpeedInsights();
         },
 
         setupBuildGame() {
-            // Reset all dots
-            document.querySelectorAll('.dot-btn').forEach(btn => {
+            // Reset all dots in build cells
+            document.querySelectorAll('#build-prefix-cell .dot-btn, #braille-input .dot-btn, #build-prefix-cell .braille-lesson-dot, #braille-input .braille-lesson-dot').forEach(btn => {
                 btn.setAttribute('aria-checked', 'false');
+                btn.classList.remove('filled', 'active', 'animating');
                 this.updateDotLabel(btn);
             });
         },
@@ -982,12 +1609,44 @@ injectSpeedInsights();
             const progress = (this.currentRound / this.totalRounds) * 100;
             const type = question.type;
 
+            // Reset all dots in both build cells at start of every round
+            document.querySelectorAll('#build-prefix-cell .braille-lesson-dot, #braille-input .braille-lesson-dot, #build-prefix-cell .dot-btn, #braille-input .dot-btn').forEach(btn => {
+                btn.setAttribute('aria-checked', 'false');
+                btn.classList.remove('filled', 'active', 'animating');
+                this.updateDotLabel(btn);
+            });
+
             if (type === 'build') {
                 navigateTo('game-build-screen');
                 document.getElementById('game-progress-fill').style.width = `${progress}%`;
                 document.getElementById('game-progress-text').textContent = `${this.currentRound} / ${this.totalRounds}`;
-                document.getElementById('target-letter').textContent = question.char;
-                document.getElementById('target-letter').setAttribute('aria-label', `Objetivo: ${question.char}`);
+
+                // Update the large target letter in the orange circle
+                const buildTargetLetter = document.getElementById('build-target-letter');
+                if (buildTargetLetter) {
+                    buildTargetLetter.textContent = question.char;
+                    buildTargetLetter.setAttribute('aria-label', `Objetivo: ${question.char}`);
+                }
+
+                // Trigger typewriter effect and audio only on first build round of the lesson
+                const buildMsgEl = document.getElementById('build-game-message');
+                if (buildMsgEl) {
+                    const fullMessage = `Tocá los puntos correctos para construir la letra en Braille.`;
+                    if (!this.buildInstructionShown) {
+                        this.buildInstructionShown = true;
+                        TypewriterController.start(buildMsgEl, fullMessage, {
+                            speed: 35,
+                            onComplete: () => {
+                                buildMsgEl.textContent = fullMessage;
+                            }
+                        });
+                        // Speak the instruction (mascot audio)
+                        AudioService.speak(fullMessage);
+                    } else {
+                        // Just set the text statically on subsequent rounds
+                        buildMsgEl.textContent = fullMessage;
+                    }
+                }
 
                 const buildContainer = document.getElementById('build-cell-container');
                 const prefixCell = document.getElementById('build-prefix-cell');
@@ -995,26 +1654,23 @@ injectSpeedInsights();
                 const isMultiCell = question.cells.length > 1;
 
                 // Toggle single/dual cell display
-                buildContainer.classList.toggle('single-cell', !isMultiCell);
+                if (buildContainer) buildContainer.classList.toggle('single-cell', !isMultiCell);
 
                 // Update labels
                 if (isMultiCell) {
                     const prefixLabel = /[A-Z]/.test(question.char) ? 'Mayúscula' : 'Número';
-                    document.getElementById('prefix-cell-label').textContent = prefixLabel;
-                    document.getElementById('main-cell-label').textContent = question.char.toLowerCase();
+                    const prefixLabelEl = document.getElementById('prefix-cell-label');
+                    const mainLabelEl = document.getElementById('main-cell-label');
+                    if (prefixLabelEl) prefixLabelEl.textContent = prefixLabel;
+                    if (mainLabelEl) mainLabelEl.textContent = question.char.toLowerCase();
 
                     // Highlight active cell
-                    prefixCell.classList.add('active');
-                    mainCell.classList.remove('active');
+                    if (prefixCell) prefixCell.classList.add('active');
+                    if (mainCell) mainCell.classList.remove('active');
                 } else {
-                    document.getElementById('main-cell-label').textContent = question.char;
+                    const mainLabelEl = document.getElementById('main-cell-label');
+                    if (mainLabelEl) mainLabelEl.textContent = question.char;
                 }
-
-                // Reset all dots in both cells
-                document.querySelectorAll('#braille-input-prefix .dot-btn, #braille-input .dot-btn').forEach(btn => {
-                    btn.setAttribute('aria-checked', 'false');
-                    this.updateDotLabel(btn);
-                });
 
                 if (state.settings.screenReader) {
                     // Use async IIFE to properly sequence audio
@@ -1030,6 +1686,19 @@ injectSpeedInsights();
                 document.getElementById('pick-progress-fill').style.width = `${progress}%`;
 
                 document.getElementById('pick-target-letter').textContent = question.char;
+
+                // Trigger typewriter effect for the pick game message
+                const pickMsgEl = document.getElementById('pick-game-message');
+                if (pickMsgEl) {
+                    const fullMessage = `¿Cuál de estas es la ${question.char}?`;
+                    TypewriterController.start(pickMsgEl, fullMessage, {
+                        speed: 35,
+                        onComplete: () => {
+                            // Restore highlighted letter after typewriter completes
+                            pickMsgEl.innerHTML = `¿Cuál de estas es la <span id="pick-target-letter" class="lesson-letter-highlight">${question.char}</span>?`;
+                        }
+                    });
+                }
 
                 // Generate options
                 this.generatePickOptions(question);
@@ -1094,7 +1763,6 @@ injectSpeedInsights();
                 });
 
                 btn.innerHTML = `
-                    <div class="pick-v2-number-badge">${index + 1}</div>
                     ${brailleHTML}
                     <span class="pick-v2-check-mark">
                         <span class="material-symbols-outlined">check_circle</span>
@@ -1201,7 +1869,8 @@ injectSpeedInsights();
             const isMultiCell = question.cells.length > 1;
 
             // Determinar qué celda verificar
-            const inputId = isMultiCell && this.currentBuildStep === 0 ? 'braille-input-prefix' : 'braille-input';
+            // Determinar qué celda verificar - matching fix from braille-input-prefix to build-prefix-cell
+            const inputId = isMultiCell && this.currentBuildStep === 0 ? 'build-prefix-cell' : 'braille-input';
             const userDots = [];
 
             document.querySelectorAll(`#${inputId} .dot-btn`).forEach(btn => {
@@ -1266,6 +1935,9 @@ injectSpeedInsights();
             const title = document.getElementById('feedback-title');
             const message = document.getElementById('feedback-message');
 
+            // Reset processing flag when showing new feedback
+            this.feedbackProcessing = false;
+
             overlay.classList.remove('hidden', 'success', 'error');
             overlay.classList.add(isCorrect ? 'success' : 'error');
 
@@ -1277,32 +1949,46 @@ injectSpeedInsights();
         },
 
         hideFeedback() {
+            // Prevent double clicks
+            if (this.feedbackProcessing) return;
+            this.feedbackProcessing = true;
+
             document.getElementById('feedback-overlay').classList.add('hidden');
             this.nextRound();
         },
 
         showHint() {
             const question = this.questions[this.currentRound - 1];
-            const desc = BrailleData.getDotsDescription(question.letter);
+            if (!question) return;
+
+            const char = question.char;
+            const desc = BrailleData.getDotsDescription(char);
+            // Get dots from the first cell (or current build step for multi-cell)
+            const cellIndex = question.cells.length > 1 ? this.currentBuildStep || 0 : 0;
+            const dots = question.cells[cellIndex]?.dots || [];
 
             this.hintsUsed++;
             this.score = Math.max(0, this.score - 25);
 
-            AudioService.speak(`Pista: ${question.letter.toUpperCase()} es ${desc}`);
-            HapticService.dots(question.dots);
+            AudioService.speak(`Pista: ${char.toUpperCase()} es ${desc}`);
+            HapticService.dots(dots);
 
             // Visual hint - highlight correct dots or options
             if (question.type === 'build') {
-                document.querySelectorAll('#braille-input .dot-btn').forEach(btn => {
+                // Determine which cell to highlight based on build step
+                const inputId = question.cells.length > 1 && this.currentBuildStep === 0
+                    ? 'build-prefix-cell'
+                    : 'braille-input';
+                document.querySelectorAll(`#${inputId} .dot-btn, #${inputId} .braille-lesson-dot`).forEach(btn => {
                     const dotNum = parseInt(btn.dataset.dot);
-                    if (question.dots.includes(dotNum)) {
+                    if (dots.includes(dotNum)) {
                         btn.classList.add('hint-highlight');
                         setTimeout(() => btn.classList.remove('hint-highlight'), 2000);
                     }
                 });
             } else if (question.type === 'pick') {
-                document.querySelectorAll('.pick-option-cell').forEach(cell => {
-                    if (cell.dataset.letter === question.letter) {
+                document.querySelectorAll('.pick-option-cell, .pick-v2-option-btn').forEach(cell => {
+                    if (cell.dataset.char === char) {
                         cell.classList.add('hint-highlight');
                         setTimeout(() => cell.classList.remove('hint-highlight'), 2000);
                     }
@@ -1363,6 +2049,14 @@ injectSpeedInsights();
             }
 
             state.progress.lastPlayedAt = new Date().toISOString();
+
+            // Track daily challenge completion
+            if (this.currentLevel?.id === 'daily') {
+                const todayDate = new Date().toDateString();
+                state.dailyChallenge.date = todayDate;
+                state.dailyChallenge.completed = true;
+            }
+
             saveState();
 
             // Check achievements
@@ -1523,15 +2217,28 @@ injectSpeedInsights();
     function updateDashboard() {
         // Greeting
         const name = state.profile.name || 'Aprendiz';
-        document.getElementById('greeting-text').textContent = `¡Hola, ${name}!`;
+        const greetingEl = document.getElementById('greeting-text');
+        if (greetingEl) {
+            greetingEl.textContent = '¡Hola, ';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'highlight';
+            nameSpan.textContent = name;
+            greetingEl.appendChild(nameSpan);
+            greetingEl.append('!');
+        }
 
         // Streak
         document.getElementById('streak-count').textContent = state.progress.currentStreak;
 
         // XP
         document.getElementById('total-xp').textContent = state.progress.totalXP;
-        const xpProgress = Math.min((state.progress.totalXP % 1000) / 10, 100);
-        document.getElementById('xp-progress').style.width = `${xpProgress}%`;
+
+        // Update XP progress if element exists
+        const xpProgressEl = document.getElementById('xp-progress');
+        if (xpProgressEl) {
+            const xpProgress = Math.min((state.progress.totalXP % 1000) / 10, 100);
+            xpProgressEl.style.width = `${xpProgress}%`;
+        }
 
         // Continue button description - show the NEXT level to play
         let nextLevelForDisplay;
@@ -1554,24 +2261,18 @@ injectSpeedInsights();
                 !l.isPremium
             ) || BrailleData.LEVELS[highestCompletedIndex] || BrailleData.LEVELS[0];
         }
-        document.getElementById('continue-desc').textContent = `Hoy aprenderás: ${nextLevelForDisplay.letters.map(l => l.toUpperCase()).join(', ')}`;
+
+        // Update Level Number and Title in Continue Card
+        const levelNumEl = document.getElementById('current-level-num');
+        const levelTitleEl = document.getElementById('continue-level-title');
+        if (levelNumEl) levelNumEl.textContent = nextLevelForDisplay.id;
+        if (levelTitleEl) levelTitleEl.textContent = nextLevelForDisplay.title;
+
+        document.getElementById('continue-desc').textContent = `Hoy aprenderás: ${nextLevelForDisplay.letters.join(', ')}`;
+
         const todayFocus = document.getElementById('today-focus');
         if (todayFocus) {
-            todayFocus.textContent = nextLevelForDisplay.letters.map(l => l.toUpperCase()).join(', ');
-        }
-
-        // Daily challenge
-        const today = new Date().toDateString();
-        if (state.dailyChallenge.date !== today) {
-            state.dailyChallenge.date = today;
-            state.dailyChallenge.completed = false;
-            saveState();
-        }
-
-        const dailyBtn = document.getElementById('daily-challenge-btn');
-        if (state.dailyChallenge.completed) {
-            dailyBtn.querySelector('.badge-new').textContent = '✓';
-            document.getElementById('daily-desc').textContent = '¡Completado hoy!';
+            todayFocus.textContent = nextLevelForDisplay.letters.join(', ');
         }
 
         // Update progress bar with real progress
@@ -1593,6 +2294,42 @@ injectSpeedInsights();
         if (levelsCompletedEl) {
             levelsCompletedEl.textContent = completedLevels;
         }
+
+        // Update upcoming achievements
+        updateUpcomingAchievements();
+    }
+
+    function updateUpcomingAchievements() {
+        const nextAchievementsContainer = document.getElementById('next-achievements');
+        if (!nextAchievementsContainer) return;
+
+        // Find next 2 locked achievements
+        const lockedAchievements = BrailleData.ACHIEVEMENTS.filter(ach =>
+            !state.progress.achievements.includes(ach.id)
+        ).slice(0, 2);
+
+        if (lockedAchievements.length === 0) {
+            nextAchievementsContainer.innerHTML = `
+                <div class="achievement-row">
+                    <div class="achievement-icon-box">🏆</div>
+                    <div class="achievement-info">
+                        <h4>¡Todos los logros completados!</h4>
+                        <p>Eres un maestro del Braille.</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        nextAchievementsContainer.innerHTML = lockedAchievements.map(ach => `
+            <div class="achievement-row locked">
+                <div class="achievement-icon-box">🔒</div>
+                <div class="achievement-info">
+                    <h4>${ach.title}</h4>
+                    <p>${ach.description}</p>
+                </div>
+            </div>
+        `).join('');
     }
 
     function updateLevelsScreen() {
@@ -1748,14 +2485,40 @@ injectSpeedInsights();
     // Note: updateProgressScreen is defined below with full achievements support
 
     function updateSettingsScreen() {
+        // Update profile info
+        const name = state.profile.name || 'Aprendiz';
+        const email = state.profile.email || 'Sin correo configurado';
+        const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) || 'AP';
+
+        const nameEl = document.getElementById('settings-name');
+        const emailEl = document.getElementById('settings-email');
+        const initialsEl = document.getElementById('settings-initials');
+
+        if (nameEl) nameEl.textContent = name;
+        if (emailEl) emailEl.textContent = email;
+        if (initialsEl) initialsEl.textContent = initials;
+
         // Update toggle states
+        document.getElementById('settings-screen-reader')?.classList.toggle('on', state.settings.screenReader);
         document.getElementById('settings-screen-reader')?.setAttribute('aria-checked', state.settings.screenReader);
+
+        document.getElementById('settings-haptic')?.classList.toggle('on', state.settings.hapticFeedback);
         document.getElementById('settings-haptic')?.setAttribute('aria-checked', state.settings.hapticFeedback);
+
+        document.getElementById('settings-contrast')?.classList.toggle('on', state.settings.highContrast);
         document.getElementById('settings-contrast')?.setAttribute('aria-checked', state.settings.highContrast);
+
+        document.getElementById('settings-timed')?.classList.toggle('on', state.settings.timedChallenges);
         document.getElementById('settings-timed')?.setAttribute('aria-checked', state.settings.timedChallenges);
 
+        document.getElementById('settings-reminders')?.classList.toggle('on', state.settings.reminders);
+        document.getElementById('settings-reminders')?.setAttribute('aria-checked', state.settings.reminders);
+
+        document.getElementById('settings-email-notif')?.classList.toggle('on', state.settings.newsUpdates);
+        document.getElementById('settings-email-notif')?.setAttribute('aria-checked', state.settings.newsUpdates);
+
         // Speed buttons
-        document.querySelectorAll('.speed-btn').forEach(btn => {
+        document.querySelectorAll('.speed-btn-new').forEach(btn => {
             btn.classList.toggle('active', parseFloat(btn.dataset.speed) === state.settings.audioSpeed);
         });
     }
@@ -1925,22 +2688,470 @@ injectSpeedInsights();
             });
         }
 
+        // Settings Screen Handlers
+        const settingsScreen = document.getElementById('settings-screen');
+        if (settingsScreen) {
+            settingsScreen.addEventListener('click', async (e) => {
+                const target = e.target;
+
+                // Profile Edit
+                if (target.closest('.profile-edit-btn')) {
+                    const newName = prompt('Ingresa tu nombre:', state.profile.name);
+                    if (newName !== null) {
+                        const trimmedName = newName.trim();
+                        if (trimmedName) {
+                            state.profile.name = trimmedName;
+                            const email = prompt('Ingresa tu correo electrónico:', state.profile.email);
+                            if (email !== null) {
+                                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                                if (emailRegex.test(email.trim())) {
+                                    state.profile.email = email.trim();
+                                    saveState();
+                                    updateSettingsScreen();
+                                    if (dataSyncModule) await dataSyncModule.saveProfile(state.profile, state.profile.supabaseUserId);
+                                } else {
+                                    alert('Por favor ingresa un correo electrónico válido.');
+                                }
+                            } else {
+                                saveState();
+                                updateSettingsScreen();
+                                if (dataSyncModule) await dataSyncModule.saveProfile(state.profile, state.profile.supabaseUserId);
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // Toggles
+                const toggle = target.closest('.toggle-switch-new');
+                if (toggle) {
+                    const id = toggle.id;
+                    let settingKey = '';
+
+                    switch (id) {
+                        case 'settings-screen-reader': settingKey = 'screenReader'; break;
+                        case 'settings-haptic': settingKey = 'hapticFeedback'; break;
+                        case 'settings-contrast': settingKey = 'highContrast'; break;
+                        case 'settings-timed': settingKey = 'timedChallenges'; break;
+                        case 'settings-reminders': settingKey = 'reminders'; break;
+                        case 'settings-email-notif': settingKey = 'newsUpdates'; break;
+                    }
+
+                    if (settingKey) {
+                        state.settings[settingKey] = !state.settings[settingKey];
+                        if (settingKey === 'screenReader') {
+                            SpeechController.ensureLessonAudioEnabled('mode_switch');
+                        }
+                        HapticService.tap();
+                        saveState();
+                        updateSettingsScreen();
+                        if (settingKey === 'highContrast') applySettings();
+                        if (dataSyncModule) await dataSyncModule.saveSettings(state.settings, state.profile.supabaseUserId);
+                    }
+                    return;
+                }
+
+                // Audio Speed
+                const speedBtn = target.closest('.speed-btn-new');
+                if (speedBtn) {
+                    const speed = parseFloat(speedBtn.dataset.speed);
+                    state.settings.audioSpeed = speed;
+                    HapticService.tap();
+                    saveState();
+                    updateSettingsScreen();
+                    if (dataSyncModule) await dataSyncModule.saveSettings(state.settings, state.profile.supabaseUserId);
+                    return;
+                }
+
+                // Logout
+                if (target.closest('#settings-logout')) {
+                    if (confirm('¿Estás seguro de que deseas cerrar sesión?')) {
+                        if (signOutFunc) {
+                            await signOutFunc();
+                        } else {
+                            // Fallback if Supabase not loaded
+                            state.session.isAuthenticated = false;
+                            state.profile.supabaseUserId = null;
+                            saveState();
+                            navigateTo('welcome-screen');
+                        }
+                    }
+                    return;
+                }
+
+                // Back Button
+                if (target.closest('#settings-back-btn')) {
+                    navigateTo('dashboard-screen');
+                    updateDashboard();
+                    return;
+                }
+            });
+        }
+
         // Welcome screen button handlers
-        document.getElementById('welcome-start-btn')?.addEventListener('click', () => {
-            if (state.session.isFirstLaunch) {
-                // Skip onboarding settings, go directly to profile screen
-                navigateTo('profile-screen');
-            } else {
-                navigateTo('dashboard-screen');
-                updateDashboard();
+        const welcomeStartBtn = document.getElementById('welcome-start-btn');
+
+        if (!welcomeStartBtn) {
+            console.error('❌ welcome-start-btn not found!');
+        } else {
+            console.log('✅ welcome-start-btn found');
+            welcomeStartBtn.addEventListener('click', () => {
+                console.log('🚀 Start button clicked');
+                // Navigate to account choice screen (auth screen)
+                navigateTo('auth-screen');
+            });
+        }
+
+        // ================================
+        // Auth Screen Event Handlers
+        // ================================
+
+        // Import auth functions dynamically (since Supabase uses ES Modules)
+        let signInWithMagicLink = null;
+        let signInWithGoogle = null;
+        let signOutFunc = null;
+        let authEmail = '';
+
+        // Initialize Supabase auth (async)
+        let dataSyncModule = null;
+
+        (async function initSupabaseAuth() {
+            try {
+                const supabaseModule = await import('./src/lib/supabase.js');
+                signInWithMagicLink = supabaseModule.signInWithMagicLink;
+                signInWithGoogle = supabaseModule.signInWithGoogle;
+                signOutFunc = supabaseModule.signOut;
+
+                // Import data sync module
+                dataSyncModule = await import('./src/lib/dataSync.js');
+
+                // Mutex lock to prevent race conditions in auth processing
+                let authSessionPromise = null;
+                let processedUserId = null;
+
+                // Shared Auth Handler with mutex lock (prevents race conditions)
+                async function handleAuthSession(session) {
+                    if (session?.user) {
+                        const userId = session.user.id;
+
+                        // Skip if we already successfully processed this exact user
+                        if (processedUserId === userId) {
+                            console.log('⏭️ Session already processed for user, skipping');
+                            return;
+                        }
+
+                        // If another call is already processing, wait for it
+                        if (authSessionPromise) {
+                            console.log('⏳ Auth processing in progress, waiting...');
+                            await authSessionPromise;
+                            // After waiting, check if it was for the same user
+                            if (processedUserId === userId) {
+                                console.log('⏭️ Session was processed while waiting, skipping');
+                                return;
+                            }
+                        }
+
+                        // Create a new promise for this processing attempt
+                        let resolveAuth;
+                        authSessionPromise = new Promise(resolve => { resolveAuth = resolve; });
+
+                        try {
+                            console.log('🔐 Acquired auth lock for:', session.user.email);
+
+                            console.log('✅ Handling Auth Session:', session.user.email);
+
+                            state.session.isAuthenticated = true;
+                            state.profile.supabaseUserId = session.user.id;
+                            state.profile.email = session.user.email;
+
+                            // Load Data - pass user ID directly to avoid redundant getCurrentUser() call
+                            // Use timeout to prevent hanging if database is slow/unreachable
+                            if (dataSyncModule) {
+                                try {
+                                    const loadDataWithTimeout = Promise.race([
+                                        dataSyncModule.loadUserData(session.user.id),
+                                        new Promise((_, reject) =>
+                                            setTimeout(() => reject(new Error('Data load timeout')), 5000)
+                                        )
+                                    ]);
+
+                                    const userData = await loadDataWithTimeout;
+                                    if (userData) {
+                                        const appData = dataSyncModule.toAppState(userData);
+                                        if (appData) {
+                                            state.profile = { ...state.profile, ...appData.profile };
+                                            state.settings = { ...state.settings, ...appData.settings };
+                                            state.progress = { ...state.progress, ...appData.progress };
+                                            state.pet = { ...state.pet, ...appData.pet };
+                                        }
+                                    }
+                                    lastCloudLoadSucceeded = true;
+                                } catch (dataError) {
+                                    console.warn('⚠️ Could not load user data from cloud:', dataError.message);
+                                    // Continue anyway with local state - don't block navigation
+                                    lastCloudLoadSucceeded = false;
+                                }
+                            }
+
+                            saveState();
+
+                            // Clean URL
+                            if (window.location.hash && (window.location.hash.includes('access_token') || window.location.hash.includes('type=recovery'))) {
+                                window.history.replaceState(null, '', window.location.pathname);
+                            }
+
+                            // Mark as successfully processed before navigation
+                            processedUserId = userId;
+
+                            // Decide Destination based on EXPLICIT onboarding flag
+                            if (state.profile.onboardingCompleted === true) {
+                                console.log('✅ Onboarding completed - going to Dashboard');
+                                navigateTo('dashboard-screen');
+                                updateDashboard();
+                            } else {
+                                console.log('ℹ️ Onboarding NOT completed - going to Profile Setup');
+                                navigateTo('profile-screen');
+                            }
+                        } finally {
+                            // Always release the lock
+                            console.log('🔓 Releasing auth lock');
+                            resolveAuth();
+                            authSessionPromise = null;
+                        }
+                    } else {
+                        // No session -> Welcome
+                        state.session.isAuthenticated = false;
+
+                        // Only redirect to welcome if we are on a protected screen
+                        const protectedScreens = ['dashboard-screen', 'profile-screen', 'levels-screen', 'games-screen', 'practice-screen', 'progress-screen', 'settings-screen'];
+                        if (protectedScreens.includes(state.session.currentScreen)) {
+                            navigateTo('welcome-screen');
+                        }
+                    }
+                } // Close handleAuthSession
+
+                let isRedirecting = false;
+
+                // Check for auth callback (user clicked magic link or OAuth)
+                // NOTE: We deliberately skip INITIAL_SESSION here to avoid race conditions.
+                // The initial session is handled by getSession() below as the single source of truth.
+                supabaseModule.onAuthStateChange(async (event, session) => {
+                    console.log('Auth state changed:', event);
+
+                    // If we detect a signed out event BUT we know we are redirecting, ignore it
+                    if (event === 'SIGNED_OUT' && isRedirecting) {
+                        console.log('⚠️ Ignoring SIGNED_OUT event during redirect phase');
+                        return;
+                    }
+
+                    // Handle SIGNED_IN for new logins (OAuth redirects, magic links)
+                    // Skip INITIAL_SESSION - it's handled by getSession() to avoid double-processing
+                    if (event === 'SIGNED_IN' && session) {
+                        await handleAuthSession(session);
+                    } else if (event === 'TOKEN_REFRESHED' && session && !processedUserId) {
+                        // Handle token refresh only if we haven't processed a session yet
+                        await handleAuthSession(session);
+                    } else if (event === 'SIGNED_OUT') {
+                        processedUserId = null; // Reset guard for next login
+                        state.session.isAuthenticated = false;
+                        state.profile.supabaseUserId = null;
+                        navigateTo('welcome-screen');
+                    }
+                });
+
+                // Initial Check
+                const session = await supabaseModule.getSession();
+                if (session) {
+                    await handleAuthSession(session);
+                } else {
+                    // Determine if we are in an auth redirect flow
+                    const hash = window.location.hash;
+                    const search = window.location.search;
+
+                    // More aggressive check: check localStorage for Supabase's own recovery flag 
+                    // or if we just recently initiated a login
+                    const isAuthRedirect = (
+                        hash.includes('access_token') ||
+                        hash.includes('type=recovery') ||
+                        search.includes('code=') ||
+                        search.includes('error=') ||
+                        // Supabase sometimes clears hash before we see it, so check if we are on the root 
+                        // and came from an OAuth provider (referrer check is unreliable, but timing is key)
+                        (history.state && history.state.flow === 'oauth')
+                    );
+
+                    if (isAuthRedirect) {
+                        console.log('🔄 Auth redirect detected in URL - Waiting for session to initialize...');
+                        isRedirecting = true;
+                        // Force splash screen to stay active
+                        const splashTitle = document.querySelector('#splash-screen h1');
+                        if (splashTitle) splashTitle.textContent = "Iniciando sesión...";
+
+                        // Safety timeout: if 5 seconds pass and no session, force welcome
+                        setTimeout(() => {
+                            if (!state.session.isAuthenticated) {
+                                console.warn('⏰ Auth timeout - forcing welcome screen');
+                                navigateTo('welcome-screen');
+                            }
+                        }, 5000);
+                    } else {
+                        // Normal boot, no session, no redirect params
+                        if (state.session.currentScreen === 'splash') {
+                            navigateTo('welcome-screen');
+                        }
+                    }
+                }
+
+                // Global safety timeout: if we're still on splash after 8 seconds, force navigation
+                // This catches edge cases where auth events don't fire properly
+                setTimeout(() => {
+                    if (state.session.currentScreen === 'splash') {
+                        console.warn('⏰ Global splash timeout - forcing navigation');
+                        if (state.session.isAuthenticated) {
+                            navigateTo('dashboard-screen');
+                            updateDashboard();
+                        } else {
+                            navigateTo('welcome-screen');
+                        }
+                    }
+                }, 8000);
+
+                console.log('✅ Supabase auth initialized');
+            } catch (error) {
+                console.error('Failed to initialize Supabase auth:', error);
+                // If Supabase fails to initialize, don't leave user stuck on splash
+                if (state.session.currentScreen === 'splash') {
+                    navigateTo('welcome-screen');
+                }
             }
+        })();
+
+        // Auth back button
+        const authBackBtn = document.getElementById('auth-back-btn');
+        if (authBackBtn) {
+            authBackBtn.addEventListener('click', () => {
+                // Reset auth screen state
+                showAuthStep('email');
+                document.getElementById('auth-email').value = '';
+                document.getElementById('auth-error').classList.add('hidden');
+                navigateTo('splash-screen');
+            });
+        }
+
+        // Guest button on auth screen
+        const authGuestBtn = document.getElementById('auth-guest-btn');
+        if (authGuestBtn) {
+            authGuestBtn.addEventListener('click', () => {
+                if (state.session.isFirstLaunch) {
+                    navigateTo('profile-screen');
+                } else {
+                    navigateTo('dashboard-screen');
+                    updateDashboard();
+                }
+            });
+        }
+
+        // Auth form submission
+        const authForm = document.getElementById('auth-form');
+        if (authForm) {
+            authForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                const emailInput = document.getElementById('auth-email');
+                const errorEl = document.getElementById('auth-error');
+                authEmail = emailInput.value.trim();
+
+                if (!authEmail) {
+                    errorEl.textContent = 'Por favor ingresa tu correo electrónico.';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+
+                // Show loading state
+                showAuthStep('loading');
+                errorEl.classList.add('hidden');
+
+                if (signInWithMagicLink) {
+                    const result = await signInWithMagicLink(authEmail);
+
+                    if (result.success) {
+                        // Show success state
+                        document.getElementById('auth-sent-email').textContent = authEmail;
+                        showAuthStep('sent');
+                    } else {
+                        // Show error
+                        showAuthStep('email');
+                        errorEl.textContent = result.error || 'Error al enviar el enlace. Intenta de nuevo.';
+                        errorEl.classList.remove('hidden');
+                    }
+                } else {
+                    // Supabase not loaded - show error
+                    showAuthStep('email');
+                    errorEl.textContent = 'Error de conexión. Intenta de nuevo.';
+                    errorEl.classList.remove('hidden');
+                }
+            });
+        }
+
+        // Resend magic link button
+        const resendBtn = document.getElementById('auth-resend-btn');
+        if (resendBtn) {
+            resendBtn.addEventListener('click', async () => {
+                if (signInWithMagicLink && authEmail) {
+                    showAuthStep('loading');
+                    const result = await signInWithMagicLink(authEmail);
+                    if (result.success) {
+                        showAuthStep('sent');
+                    } else {
+                        showAuthStep('email');
+                        const errorEl = document.getElementById('auth-error');
+                        errorEl.textContent = result.error || 'Error al reenviar. Intenta de nuevo.';
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+            });
+        }
+
+        // Google sign-in button
+        const googleBtn = document.getElementById('auth-google-btn');
+        if (googleBtn) {
+            googleBtn.addEventListener('click', async () => {
+                const errorEl = document.getElementById('auth-error');
+                errorEl.classList.add('hidden');
+
+                if (signInWithGoogle) {
+                    const result = await signInWithGoogle();
+                    if (!result.success) {
+                        errorEl.textContent = result.error || 'Error al iniciar con Google. Intenta de nuevo.';
+                        errorEl.classList.remove('hidden');
+                    }
+                    // If successful, Supabase will redirect to Google then back to our app
+                } else {
+                    errorEl.textContent = 'Error de conexión. Recarga la página.';
+                    errorEl.classList.remove('hidden');
+                }
+            });
+        }
+
+        // Helper function to show auth steps
+        function showAuthStep(step) {
+            document.querySelectorAll('.auth-step').forEach(el => el.classList.remove('active'));
+            const stepEl = document.getElementById(`auth-step-${step}`);
+            if (stepEl) stepEl.classList.add('active');
+        }
+
+        // Dashboard Stat Card - Lessons Link
+        document.querySelector('.stat-card-new.blue')?.addEventListener('click', () => {
+            HapticService.tap();
+            navigateTo('levels-screen');
+            updateLevelsScreen();
         });
 
-        document.getElementById('welcome-login-btn')?.addEventListener('click', () => {
-            // For now, "login" just goes to dashboard (could add actual auth later)
-            state.session.isFirstLaunch = false;
-            navigateTo('dashboard-screen');
-            updateDashboard();
+        // Achievements Link
+        document.getElementById('next-achievements')?.addEventListener('click', () => {
+            HapticService.tap();
+            navigateTo('progress-screen');
+            updateProgressScreen();
         });
 
         // Onboarding toggles
@@ -1953,6 +3164,7 @@ injectSpeedInsights();
                 // Update state based on ID
                 if (toggle.id.includes('screen-reader')) {
                     state.settings.screenReader = !current;
+                    SpeechController.ensureLessonAudioEnabled('onboarding-toggle');
                 } else if (toggle.id.includes('haptic')) {
                     state.settings.hapticFeedback = !current;
                 } else if (toggle.id.includes('contrast')) {
@@ -1988,35 +3200,106 @@ injectSpeedInsights();
             navigateTo('profile-screen');
         });
 
-        // Age options
-        document.querySelectorAll('.age-option').forEach(option => {
+        // Avatar Selection
+        document.querySelectorAll('.avatar-option').forEach(option => {
             option.addEventListener('click', () => {
-                document.querySelectorAll('.age-option').forEach(o => {
-                    o.classList.remove('active');
-                    o.setAttribute('aria-checked', 'false');
-                });
+                document.querySelectorAll('.avatar-option').forEach(o => o.classList.remove('active'));
                 option.classList.add('active');
-                option.setAttribute('aria-checked', 'true');
-                state.profile.ageRange = option.dataset.age;
+                state.profile.avatar = option.dataset.avatar;
                 HapticService.tap();
             });
         });
 
-        // Profile setup
-        document.getElementById('profile-skip')?.addEventListener('click', () => {
-            state.profile.createdAt = new Date().toISOString();
-            saveState();
-            navigateTo('dashboard-screen');
-            updateDashboard();
+
+        // ================================
+        // New One-Time Profile Setup Flow
+        // ================================
+
+        // Helper to handle card selection
+        function setupCardSelection(containerId, stateKey, isMulti = false) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            container.querySelectorAll('.card-option').forEach(card => {
+                card.addEventListener('click', () => {
+                    if (isMulti) {
+                        // Multi-select behavior
+                        card.classList.toggle('active');
+                        HapticService.tap();
+
+                        // Update state
+                        const value = card.dataset.goal || card.dataset.pref;
+                        const array = state.profile[stateKey];
+                        if (card.classList.contains('active')) {
+                            if (!array.includes(value)) array.push(value);
+                        } else {
+                            const index = array.indexOf(value);
+                            if (index > -1) array.splice(index, 1);
+                        }
+                    } else {
+                        // Single-select behavior
+                        container.querySelectorAll('.card-option').forEach(c => c.classList.remove('active'));
+                        card.classList.add('active');
+                        HapticService.tap();
+
+                        // Update state
+                        const value = card.dataset.role || card.dataset.exp;
+                        state.profile[stateKey] = value;
+                    }
+                });
+            });
+        }
+
+        // Initialize selection logic
+        setupCardSelection('profile-role-grid', 'role', false);
+        setupCardSelection('profile-exp-grid', 'brailleExperience', false);
+        setupCardSelection('profile-goals-grid', 'learningGoals', true);
+        setupCardSelection('profile-prefs-grid', 'learningPreferences', true);
+
+        // Step 1: Continue Button
+        document.getElementById('profile-step-1-continue')?.addEventListener('click', () => {
+            const nameInput = document.getElementById('profile-name');
+            const name = nameInput?.value.trim() || '';
+
+            if (name) {
+                state.profile.name = name;
+            }
+
+            // Simple validation: Ensure at least name or a selection is made to feel "progress"
+            // But we don't strictly block to keep it "Friendly & Non-intrusive"
+
+            // Transition to Step 2
+            document.getElementById('profile-step-1').classList.remove('active');
+            setTimeout(() => {
+                document.getElementById('profile-step-2').classList.add('active');
+                window.scrollTo(0, 0);
+            }, 300); // Wait for fade out
         });
 
-        document.getElementById('profile-continue')?.addEventListener('click', () => {
-            state.profile.name = document.getElementById('profile-name').value.trim();
-            state.profile.createdAt = new Date().toISOString();
+        // Step 2: Finish Button ("Start Learning")
+        document.getElementById('profile-finish')?.addEventListener('click', () => {
+            completeOnboarding();
+        });
+
+        // Skip Buttons
+        document.querySelectorAll('#profile-skip').forEach(btn => {
+            btn.addEventListener('click', () => {
+                completeOnboarding();
+            });
+        });
+
+        function completeOnboarding() {
+            // Set final timestamp
+            state.profile.createdAt = state.profile.createdAt || new Date().toISOString();
+
+            // Save everything
             saveState();
+
+            // Show final friendly message toast or just navigate
+            // For now, smooth navigation
             navigateTo('dashboard-screen');
             updateDashboard();
-        });
+        }
 
         // Dashboard navigation
         document.getElementById('continue-btn')?.addEventListener('click', () => {
@@ -2049,13 +3332,30 @@ injectSpeedInsights();
                 }
             }
 
+            debugLesson('dashboard_continue', {
+                lessonId: nextLevel?.id || null,
+                userId: state.profile.supabaseUserId || null,
+                progress: {
+                    totalXP: state.progress.totalXP,
+                    levelsCompleted: state.progress.levelsCompleted.length
+                }
+            });
+
             state.session.currentLevel = nextLevel;
             navigateTo('lesson-intro-screen');
             updateLessonIntro(nextLevel);
         });
 
         document.getElementById('daily-challenge-btn')?.addEventListener('click', () => {
-            if (state.dailyChallenge.completed) {
+            const today = new Date().toDateString();
+
+            // Reset stale completion marker when a new day starts
+            if (state.dailyChallenge.date !== today) {
+                state.dailyChallenge.completed = false;
+            }
+
+            const alreadyCompletedToday = state.dailyChallenge.completed && state.dailyChallenge.date === today;
+            if (alreadyCompletedToday) {
                 AudioService.speak('Ya completaste el reto de hoy. ¡Vuelve mañana!');
                 return;
             }
@@ -2077,15 +3377,7 @@ injectSpeedInsights();
             GameEngine.startLevel('daily');
         });
 
-        document.getElementById('lab-btn')?.addEventListener('click', () => {
-            navigateTo('lab-screen');
-            updateLabScreen();
-        });
 
-        document.getElementById('lab-back-btn')?.addEventListener('click', () => {
-            navigateTo('dashboard-screen');
-            updateDashboard();
-        });
 
         document.getElementById('progress-btn')?.addEventListener('click', () => {
             navigateTo('progress-screen');
@@ -2172,10 +3464,7 @@ injectSpeedInsights();
             updateDashboard();
         });
 
-        document.getElementById('progress-btn')?.addEventListener('click', () => {
-            navigateTo('progress-screen');
-            updateProgressScreen();
-        });
+        // NOTE: progress-btn listener is already registered above (line ~3324)
 
         document.getElementById('achievements-btn')?.addEventListener('click', () => {
             navigateTo('progress-screen');
@@ -2187,8 +3476,8 @@ injectSpeedInsights();
             updateSettingsScreen();
         });
 
-        // Back buttons
-        document.querySelectorAll('.back-btn').forEach(btn => {
+        // Back buttons - Only redirect to dashboard for general back buttons
+        document.querySelectorAll('.back-btn:not(#lesson-back-btn):not(#guess-letter-back-btn):not(#form-word-back-btn):not(#memory-back-btn)').forEach(btn => {
             btn.addEventListener('click', () => {
                 navigateTo('dashboard-screen');
                 updateDashboard();
@@ -2228,6 +3517,10 @@ injectSpeedInsights();
 
         document.getElementById('start-lesson-btn')?.addEventListener('click', () => {
             if (state.session.currentLevel) {
+                debugLesson('lesson_start_click', {
+                    lessonId: state.session.currentLevel.id,
+                    userId: state.profile.supabaseUserId || null
+                });
                 GameEngine.startLevel(state.session.currentLevel.id);
             }
         });
@@ -2241,10 +3534,16 @@ injectSpeedInsights();
         });
 
         // Build game - dot buttons (ambas celdas: principal y prefijo)
-        document.querySelectorAll('#braille-input .dot-btn, #braille-input-prefix .dot-btn').forEach(btn => {
+        document.querySelectorAll('#braille-input .dot-btn, #build-prefix-cell .dot-btn, #braille-input .braille-lesson-dot, #build-prefix-cell .braille-lesson-dot').forEach(btn => {
             btn.addEventListener('click', () => {
                 const current = btn.getAttribute('aria-checked') === 'true';
-                btn.setAttribute('aria-checked', !current);
+                const newState = !current;
+                btn.setAttribute('aria-checked', newState);
+
+                // Toggle visual classes for consistency
+                btn.classList.toggle('active', newState);
+                btn.classList.toggle('filled', newState);
+
                 GameEngine.updateDotLabel(btn);
 
                 AudioService.playSound('tap');
@@ -2257,53 +3556,7 @@ injectSpeedInsights();
             });
         });
 
-        // Lab Cell - Interactive Dots
-        document.querySelectorAll('#lab-cell .dot-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const dot = parseInt(btn.dataset.dot);
-                const active = btn.classList.toggle('active');
-                btn.setAttribute('aria-checked', active);
 
-                HapticService.tap();
-                identifyLabPattern();
-            });
-        });
-
-        document.getElementById('lab-reset-btn')?.addEventListener('click', () => {
-            document.querySelectorAll('#lab-cell .dot-btn').forEach(btn => {
-                btn.classList.remove('active');
-                btn.setAttribute('aria-checked', 'false');
-            });
-            identifyLabPattern();
-            HapticService.tap();
-        });
-
-        document.getElementById('lab-pat-btn')?.addEventListener('click', () => {
-            const drone = document.getElementById('orbital-drone');
-            drone?.classList.add('happy-pulse');
-            setTimeout(() => drone?.classList.remove('happy-pulse'), 1000);
-
-            state.pet.happiness = Math.min(100, state.pet.happiness + 5);
-            updatePuppyExpression('happy');
-
-            const messages = [
-                "Procesando... Eso fue eficiente.",
-                "¡Niveles de afecto subiendo!",
-                "Interacción manual reconocida. Gracias.",
-                "Sinergia del sistema aumentada."
-            ];
-            const msg = messages[Math.floor(Math.random() * messages.length)];
-            const msgEl = document.getElementById('puppy-message');
-            if (msgEl) msgEl.textContent = msg;
-
-            HapticService.success();
-            AudioService.speak(msg);
-            saveState();
-        });
-
-        document.getElementById('lab-challenge-btn')?.addEventListener('click', () => {
-            startLabChallenge();
-        });
 
         // Game Controls
         document.getElementById('check-answer-btn')?.addEventListener('click', () => {
@@ -2359,6 +3612,16 @@ injectSpeedInsights();
             InstructionEngine.skip();
         });
 
+        // Lesson Audio Toggle Buttons
+        document.querySelectorAll('.lesson-audio-toggle').forEach(btn => {
+            btn.addEventListener('click', () => {
+                SpeechController.toggleLessonAudio();
+                HapticService.tap();
+            });
+        });
+        // Initialize toggle UI to match current setting
+        SpeechController.updateToggleUI();
+
         // Results Screen
         document.getElementById('next-level-btn')?.addEventListener('click', () => {
             const currentIndex = BrailleData.LEVELS.findIndex(l => l.id === GameEngine.currentLevel.id);
@@ -2387,6 +3650,30 @@ injectSpeedInsights();
         document.getElementById('settings-back-btn')?.addEventListener('click', () => {
             navigateTo('dashboard-screen');
             updateDashboard();
+        });
+
+        // Logout Button
+        document.getElementById('settings-logout')?.addEventListener('click', async () => {
+            if (confirm('¿Estás seguro de que quieres cerrar sesión?')) {
+                if (signOutFunc) {
+                    const result = await signOutFunc();
+                    if (result.success) {
+                        // Clear user-specific state
+                        state.profile.supabaseUserId = null;
+                        state.profile.email = null;
+                        state.session.isFirstLaunch = true;
+
+                        // Optionally reset progress or reload to splash
+                        localStorage.removeItem('braillequest_state');
+                        window.location.reload();
+                    } else {
+                        alert('Error al cerrar sesión: ' + result.error);
+                    }
+                } else {
+                    // Fallback if Supabase not loaded
+                    window.location.reload();
+                }
+            }
         });
 
         document.querySelectorAll('.speed-btn').forEach(btn => {
@@ -2418,112 +3705,13 @@ injectSpeedInsights();
     // Expose for debugging/automation
     window.__DEBUG = {
         navigateTo: navigateTo,
-        updateLabScreen: updateLabScreen,
         GameEngine: GameEngine,
         state: state
     };
 
     // Legacy support for browser tools
     window.navigateTo = navigateTo;
-    window.updateLabScreen = updateLabScreen;
 
-    function updateLabScreen() {
-        // Reset lab cell
-        document.querySelectorAll('#lab-cell .dot-btn').forEach(btn => {
-            btn.classList.remove('active');
-            btn.setAttribute('aria-checked', 'false');
-        });
-        document.getElementById('lab-result').textContent = '?';
-
-        const mascot = document.getElementById('puppy-mascot');
-        if (mascot) {
-            mascot.className = 'puppy-mascot';
-        }
-
-        document.getElementById('puppy-message').textContent = "¿Listo para jugar un poco?";
-        updatePuppyExpression();
-    }
-
-    function identifyLabPattern() {
-        const activeDots = Array.from(document.querySelectorAll('#lab-cell .dot-btn.active'))
-            .map(btn => parseInt(btn.dataset.dot))
-            .sort();
-
-        const resultEl = document.getElementById('lab-result');
-        let found = null;
-
-        const activeStr = JSON.stringify(activeDots);
-
-        for (const [char, dots] of Object.entries(BrailleData.BRAILLE_ALPHABET)) {
-            // Sort a copy to avoid mutating the source data
-            const sortedDots = [...dots].sort();
-            if (JSON.stringify(sortedDots) === activeStr) {
-                found = char;
-                break;
-            }
-        }
-
-        if (found) {
-            resultEl.textContent = found.toUpperCase();
-            resultEl.classList.add('found');
-            state.pet.labStats.totalIdentify++;
-
-            if (activeDots.length > 0) {
-                updateOrbitalFace(found);
-            }
-
-            // If in challenge mode, check answer
-            if (state.session.labChallenge) {
-                checkLabChallenge(found);
-            }
-        } else {
-            resultEl.textContent = activeDots.length > 0 ? '?' : '';
-            resultEl.classList.remove('found');
-            updateOrbitalFace();
-        }
-    }
-
-    function startLabChallenge() {
-        // Must have learned some letters
-        const pool = state.progress.lettersLearned.length > 0
-            ? state.progress.lettersLearned
-            : ['a', 'b', 'c'];
-
-        const target = pool[Math.floor(Math.random() * pool.length)];
-        state.session.labChallenge = target;
-
-        // Reset cell
-        document.querySelectorAll('#lab-cell .dot-btn').forEach(btn => {
-            btn.classList.remove('active'); btn.setAttribute('aria-checked', 'false');
-        });
-        document.getElementById('lab-result').textContent = '?';
-
-        const msg = `Reto del Sistema: ¿Puedes construir la letra '${target.toUpperCase()}'?`;
-        document.getElementById('puppy-message').textContent = msg;
-        AudioService.speak(msg);
-        HapticService.tap();
-    }
-
-    function checkLabChallenge(found) {
-        if (!state.session.labChallenge) return;
-
-        if (found.toLowerCase() === state.session.labChallenge.toLowerCase()) {
-            const successMsg = "¡Guau! ¡Lo logramos!";
-            document.getElementById('puppy-message').textContent = successMsg;
-            state.pet.labStats.totalChallengeSuccess++;
-            state.pet.happiness = Math.min(100, state.pet.happiness + 10);
-            state.session.labChallenge = null; // Reset challenge
-
-            HapticService.success();
-            AudioService.speak(successMsg);
-
-            // Celebration pulse
-            const mascot = document.getElementById('puppy-mascot');
-            mascot?.classList.add('happy');
-            setTimeout(() => mascot?.classList.remove('happy'), 2000);
-            updatePuppyExpression('happy');
-        }
-    }
 
     function updatePuppyExpression(expression = 'neutral') {
         const mascot = document.getElementById('puppy-mascot');
@@ -2541,14 +3729,68 @@ injectSpeedInsights();
         }
     }
 
-    function showPuppyMessage(text, duration = 3000) {
+    /**
+     * Trigger a one-shot mascot animation for feedback
+     * @param {string} animation - 'bounce', 'shake', 'victory', 'excited'
+     * @param {HTMLElement} [targetContainer] - Optional specific mascot container to animate
+     */
+    function triggerMascotAnimation(animation, targetContainer = null) {
+        // Find the mascot container - look in various locations
+        const containers = targetContainer
+            ? [targetContainer]
+            : [
+                document.querySelector('.lesson-mascot-mini'),
+                document.querySelector('.games-mascot-container'),
+                document.getElementById('puppy-mascot'),
+                document.querySelector('.pre-lesson-mascot-container')
+            ].filter(Boolean);
+
+        if (containers.length === 0) return;
+
+        const container = containers[0];
+        const animationClass = {
+            'bounce': 'mascot-happy-bounce',
+            'shake': 'mascot-sad-shake',
+            'victory': 'mascot-victory',
+            'excited': 'mascot-antenna-excited'
+        }[animation];
+
+        if (!animationClass) return;
+
+        // Remove any existing animation classes first
+        container.classList.remove('mascot-happy-bounce', 'mascot-sad-shake', 'mascot-victory', 'mascot-antenna-excited');
+
+        // Force reflow to restart animation
+        void container.offsetWidth;
+
+        // Add the animation class
+        container.classList.add(animationClass);
+
+        // Remove after animation completes
+        const duration = animation === 'victory' ? 800 : animation === 'bounce' ? 600 : 500;
+        setTimeout(() => {
+            container.classList.remove(animationClass);
+        }, duration);
+
+        // Also animate the antenna for extra effect
+        if (animation === 'bounce' || animation === 'excited') {
+            const antenna = container.querySelector('.mascot-antenna');
+            if (antenna) {
+                antenna.classList.add('mascot-antenna-excited');
+                setTimeout(() => antenna.classList.remove('mascot-antenna-excited'), 800);
+            }
+        }
+    }
+
+    // Export for use by GameEngine
+    window.triggerMascotAnimation = triggerMascotAnimation;
+
+    function showPuppyMessage(text, duration = 3000, options = {}) {
         // Try to find the appropriate bubble based on active screen
         let msgEl = null;
         const currentScreen = state.session.currentScreen;
 
-        if (currentScreen === 'lab-screen') {
-            msgEl = document.getElementById('puppy-message');
-        } else if (currentScreen === 'instruction-screen') {
+        if (currentScreen === 'instruction-screen') {
             msgEl = document.getElementById('instruction-puppy-message');
         } else if (currentScreen === 'dashboard-screen' || state.session.activeLevelId) {
             // General lesson intro fallback
@@ -2556,9 +3798,38 @@ injectSpeedInsights();
         }
 
         if (msgEl) {
-            msgEl.textContent = text;
+            // Handle special case for instruction letter messages
+            if (msgEl.id === 'instruction-puppy-message') {
+                const letterSpan = document.getElementById('instruction-letter');
+                // Detect intro phrase patterns: "Comencemos con la X", "Ahora, la X", "Siguiente: X", etc.
+                const introPatterns = [
+                    /^Comencemos con la (.+)$/,
+                    /^Y por último, la (.+)$/,
+                    /^Ahora, la (.+)$/,
+                    /^Siguiente: (.+)$/,
+                    /^Vamos con la (.+)$/,
+                    /^Continuamos con la (.+)$/
+                ];
+                if (letterSpan && typeof text === 'string') {
+                    for (const pattern of introPatterns) {
+                        const match = text.match(pattern);
+                        if (match) {
+                            letterSpan.textContent = `letra ${match[1]}`;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Use typewriter animation
+            const messages = Array.isArray(text) ? text : [text];
+            TypewriterController.start(msgEl, messages, {
+                speed: options.speed || 40,
+                onComplete: options.onComplete || null
+            });
+
             // Brief bounce animation on the container if possible
-            const container = msgEl.closest('.puppy-bubble');
+            const container = msgEl.closest('.puppy-bubble, .lesson-speech-bubble, .mascot-speech-bubble');
             if (container) {
                 container.style.animation = 'none';
                 container.offsetHeight; // trigger reflow
@@ -2598,10 +3869,49 @@ injectSpeedInsights();
         updateActivityList();
     }
 
+    /**
+     * Update the activity list in the progress screen
+     * Shows recent completed levels as activity items
+     */
+    function updateActivityList() {
+        const activityList = document.getElementById('activity-list');
+        if (!activityList) return;
+
+        const completedLevels = state.progress.levelsCompleted || [];
+
+        if (completedLevels.length === 0) {
+            activityList.innerHTML = '<p class="empty-state">¡Completa niveles para ver tu actividad aquí!</p>';
+            return;
+        }
+
+        // Get the most recent 5 completed levels (reverse order - newest first)
+        const recentLevels = completedLevels.slice(-5).reverse();
+
+        const activityItems = recentLevels.map(levelId => {
+            const level = BrailleData.LEVELS.find(l => l.id === levelId);
+            if (!level) return '';
+
+            const stars = state.progress.levelStars?.[levelId] || 0;
+            const starDisplay = '⭐'.repeat(stars) + '☆'.repeat(3 - stars);
+
+            return `
+                <div class="activity-item">
+                    <div class="activity-icon">✅</div>
+                    <div class="activity-info">
+                        <span class="activity-title">${level.title}</span>
+                        <span class="activity-detail">${starDisplay}</span>
+                    </div>
+                </div>
+            `;
+        }).filter(Boolean);
+
+        activityList.innerHTML = activityItems.length > 0
+            ? activityItems.join('')
+            : '<p class="empty-state">¡Completa niveles para ver tu actividad aquí!</p>';
+    }
+
     function updateLessonIntro(level) {
         // Update lesson header/badge
-        const lessonTitle = document.getElementById('lesson-title');
-        if (lessonTitle) lessonTitle.textContent = `Nivel ${level.number}`;
 
         const lessonNumberBadge = document.getElementById('lesson-number-badge');
         if (lessonNumberBadge) lessonNumberBadge.textContent = `Lección ${level.number}`;
@@ -2613,11 +3923,12 @@ injectSpeedInsights();
         const lessonDescription = document.getElementById('lesson-description');
         if (lessonDescription) lessonDescription.textContent = level.description;
 
-        // Update mascot message based on level
+        // Update mascot message based on level with typewriter effect
         const puppyMessage = document.getElementById('intro-puppy-message');
         if (puppyMessage) {
             const messages = ['¡Tú puedes!', '¡Vamos!', '¡Aprende conmigo!', '¡A jugar!'];
-            puppyMessage.textContent = messages[level.number % messages.length] || '¡Tú puedes!';
+            const msg = messages[level.number % messages.length] || '¡Tú puedes!';
+            TypewriterController.start(puppyMessage, msg, { speed: 50 });
         }
 
         if (state.settings.screenReader) {
@@ -2626,859 +3937,63 @@ injectSpeedInsights();
     }
 
     // ================================
-    // Guess the Letter Game (Adivina la Letra)
+    // Modular Games Integration
     // ================================
-
-    const GuessLetterGame = {
-        currentRound: 0,
-        totalRounds: 10,
-        score: 0,
-        lives: 3,
-        correctAnswers: 0,
-        currentLetter: null,
-        letters: [],
-        answered: false,
-
-        init() {
-            this.setupEventListeners();
-        },
-
-        setupEventListeners() {
-            // Play button
-            const playBtn = document.getElementById('play-guess-letter');
-            if (playBtn) {
-                playBtn.addEventListener('click', () => this.startGame());
-            }
-
-            // Back button from game
-            const backBtn = document.getElementById('guess-letter-back-btn');
-            if (backBtn) {
-                backBtn.addEventListener('click', () => this.exitGame());
-            }
-
-            // Next button
-            const nextBtn = document.getElementById('guess-letter-next');
-            if (nextBtn) {
-                nextBtn.addEventListener('click', () => this.nextRound());
-            }
-
-            // Answer options
-            const optionsContainer = document.getElementById('guess-letter-options');
-            if (optionsContainer) {
-                optionsContainer.addEventListener('click', (e) => {
-                    const btn = e.target.closest('.game-answer-btn');
-                    if (btn && !this.answered) {
-                        this.checkAnswer(btn.dataset.letter);
-                    }
-                });
-            }
-
-            // Game over buttons
-            const playAgainBtn = document.getElementById('game-over-play-again');
-            if (playAgainBtn) {
-                playAgainBtn.addEventListener('click', () => this.startGame());
-            }
-
-            const backToGamesBtn = document.getElementById('game-over-back');
-            if (backToGamesBtn) {
-                backToGamesBtn.addEventListener('click', () => {
-                    navigateTo('games-screen');
-                });
-            }
-
-            // Games screen back button
-            const gamesBackBtn = document.getElementById('games-back-btn');
-            if (gamesBackBtn) {
-                gamesBackBtn.addEventListener('click', () => {
-                    navigateTo('dashboard-screen');
-                });
-            }
-        },
-
-        startGame() {
-            // Reset game state
-            this.currentRound = 0;
-            this.score = 0;
-            this.lives = 3;
-            this.correctAnswers = 0;
-            this.answered = false;
-
-            // Get letters from learned levels or use default set
-            const learnedLetters = this.getLearnedLetters();
-            this.letters = learnedLetters.length >= 4 ? learnedLetters : ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
-
-            // Update UI
-            this.updateScoreDisplay();
-            this.updateLivesDisplay();
-            document.getElementById('guess-letter-total').textContent = this.totalRounds;
-
-            // Navigate to game screen
-            navigateTo('guess-letter-screen');
-
-            // Start first round
-            this.nextRound();
-        },
-
-        getLearnedLetters() {
-            // Get letters from completed levels
-            const completedLevelIds = state.progress?.completedLevels || [];
-            const learnedLetters = new Set();
-
-            completedLevelIds.forEach(levelId => {
-                const level = BrailleData.LEVELS.find(l => l.id === levelId);
-                if (level && level.letters) {
-                    level.letters.forEach(letter => {
-                        if (typeof letter === 'string' && /^[a-z]$/i.test(letter)) {
-                            learnedLetters.add(letter.toLowerCase());
-                        }
-                    });
-                }
-            });
-
-            return Array.from(learnedLetters);
-        },
-
-        nextRound() {
-            this.currentRound++;
-            this.answered = false;
-
-            // Check if game is over
-            if (this.currentRound > this.totalRounds || this.lives <= 0) {
-                this.endGame();
-                return;
-            }
-
-            // Update round display
-            document.getElementById('guess-letter-round').textContent = this.currentRound;
-
-            // Hide footer and feedback
-            document.getElementById('guess-letter-footer')?.classList.add('hidden');
-            const feedback = document.getElementById('guess-letter-feedback');
-            if (feedback) {
-                feedback.classList.add('hidden');
-                feedback.classList.remove('correct', 'incorrect');
-            }
-
-            // Reset answer button styles
-            const buttons = document.querySelectorAll('.game-answer-btn');
-            buttons.forEach(btn => {
-                btn.classList.remove('correct', 'incorrect');
-                btn.disabled = false;
-            });
-
-            // Pick a random letter
-            this.currentLetter = this.letters[Math.floor(Math.random() * this.letters.length)];
-
-            // Display Braille pattern
-            this.displayBraillePattern(this.currentLetter);
-
-            // Generate options (1 correct + 3 distractors)
-            this.displayOptions();
-        },
-
-        displayBraillePattern(letter) {
-            const dots = BrailleData.BRAILLE_ALPHABET[letter.toLowerCase()];
-            const cellDots = document.querySelectorAll('#guess-braille-cell .game-braille-dot');
-
-            cellDots.forEach(dot => {
-                const dotNum = parseInt(dot.dataset.dot);
-                if (dots && dots.includes(dotNum)) {
-                    dot.classList.add('active');
-                } else {
-                    dot.classList.remove('active');
-                }
-            });
-        },
-
-        displayOptions() {
-            const optionsContainer = document.getElementById('guess-letter-options');
-            if (!optionsContainer) return;
-
-            // Generate distractors
-            const distractors = BrailleData.generateDistractors(this.currentLetter, 3, this.letters);
-
-            // Combine correct answer with distractors and shuffle
-            const options = [this.currentLetter, ...distractors];
-            this.shuffleArray(options);
-
-            // Update buttons
-            const buttons = optionsContainer.querySelectorAll('.game-answer-btn');
-            buttons.forEach((btn, index) => {
-                btn.textContent = options[index].toUpperCase();
-                btn.dataset.letter = options[index].toLowerCase();
-            });
-        },
-
-        shuffleArray(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-            return array;
-        },
-
-        checkAnswer(selectedLetter) {
-            if (this.answered) return;
-            this.answered = true;
-
-            const isCorrect = selectedLetter.toLowerCase() === this.currentLetter.toLowerCase();
-            const buttons = document.querySelectorAll('.game-answer-btn');
-            const feedback = document.getElementById('guess-letter-feedback');
-            const feedbackIcon = feedback?.querySelector('.game-feedback-icon');
-            const feedbackText = feedback?.querySelector('.game-feedback-text');
-
-            // Disable all buttons
-            buttons.forEach(btn => btn.disabled = true);
-
-            // Highlight selected button
-            buttons.forEach(btn => {
-                if (btn.dataset.letter === selectedLetter.toLowerCase()) {
-                    btn.classList.add(isCorrect ? 'correct' : 'incorrect');
-                }
-                if (btn.dataset.letter === this.currentLetter.toLowerCase()) {
-                    btn.classList.add('correct');
-                }
-            });
-
-            if (isCorrect) {
-                this.score += 10;
-                this.correctAnswers++;
-                HapticService.success();
-                AudioService.playSound('correct');
-
-                if (feedback) {
-                    feedback.classList.remove('hidden', 'incorrect');
-                    feedback.classList.add('correct');
-                    if (feedbackIcon) feedbackIcon.textContent = '✓';
-                    if (feedbackText) feedbackText.textContent = '¡Correcto!';
-                }
-            } else {
-                this.lives--;
-                HapticService.error();
-                AudioService.playSound('incorrect');
-
-                if (feedback) {
-                    feedback.classList.remove('hidden', 'correct');
-                    feedback.classList.add('incorrect');
-                    if (feedbackIcon) feedbackIcon.textContent = '✗';
-                    if (feedbackText) feedbackText.textContent = `Era la letra ${this.currentLetter.toUpperCase()}`;
-                }
-
-                this.updateLivesDisplay();
-
-                // Check if out of lives
-                if (this.lives <= 0) {
-                    setTimeout(() => this.endGame(), 1500);
-                    return;
-                }
-            }
-
-            this.updateScoreDisplay();
-
-            // Show next button
-            document.getElementById('guess-letter-footer')?.classList.remove('hidden');
-        },
-
-        updateScoreDisplay() {
-            const scoreEl = document.getElementById('guess-letter-score');
-            if (scoreEl) scoreEl.textContent = this.score;
-        },
-
-        updateLivesDisplay() {
-            const livesEl = document.getElementById('guess-letter-lives');
-            if (livesEl) {
-                livesEl.textContent = '❤️'.repeat(this.lives) + '🖤'.repeat(Math.max(0, 3 - this.lives));
-            }
-        },
-
-        exitGame() {
-            navigateTo('games-screen');
-        },
-
-        endGame() {
-            const accuracy = this.currentRound > 0
-                ? Math.round((this.correctAnswers / Math.min(this.currentRound, this.totalRounds)) * 100)
-                : 0;
-
-            // Calculate XP based on performance
-            const baseXP = this.score;
-            const accuracyBonus = accuracy >= 80 ? 20 : (accuracy >= 60 ? 10 : 0);
-            const completionBonus = this.lives > 0 ? 30 : 0;
-            const totalXP = baseXP + accuracyBonus + completionBonus;
-
-            // Update state XP
-            state.progress.xp = (state.progress.xp || 0) + totalXP;
-            saveState();
-
-            // Determine result message
-            let icon, title, subtitle;
-            if (this.lives <= 0) {
-                icon = '😢';
-                title = '¡Se acabaron las vidas!';
-                subtitle = 'Sigue practicando';
-            } else if (accuracy >= 80) {
-                icon = '🎉';
-                title = '¡Excelente!';
-                subtitle = '¡Eres un experto!';
-            } else if (accuracy >= 60) {
-                icon = '👍';
-                title = '¡Bien hecho!';
-                subtitle = 'Sigue mejorando';
-            } else {
-                icon = '💪';
-                title = '¡Buen intento!';
-                subtitle = 'Practica más para mejorar';
-            }
-
-            // Update game over screen
-            document.getElementById('game-over-icon').textContent = icon;
-            document.getElementById('game-over-title').textContent = title;
-            document.getElementById('game-over-subtitle').textContent = subtitle;
-            document.getElementById('game-over-score').textContent = this.score;
-            document.getElementById('game-over-correct').textContent = this.correctAnswers;
-            document.getElementById('game-over-accuracy').textContent = accuracy + '%';
-            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
-
-            // Navigate to game over screen
-            navigateTo('game-over-screen');
-        }
+    const gameDeps = {
+        BrailleData: window.BrailleData,
+        HapticService,
+        AudioService,
+        state,
+        saveState,
+        navigateTo
     };
 
-    // ================================
-    // Form the Word Game (Forma la Palabra)
-    // ================================
-
-    const FormWordGame = {
-        currentRound: 0,
-        totalRounds: 5,
-        score: 0,
-        lives: 3,
-        correctAnswers: 0,
-        currentWord: null,
-        words: ['sol', 'mar', 'pan', 'luz', 'rio', 'dia', 'mes', 'ojo', 'pie', 'fin'],
-        selectedLetters: [],
-        answered: false,
-
-        init() {
-            this.setupEventListeners();
-        },
-
-        setupEventListeners() {
-            const playBtn = document.getElementById('play-form-word');
-            if (playBtn) {
-                playBtn.addEventListener('click', () => this.startGame());
-            }
-
-            const backBtn = document.getElementById('form-word-back-btn');
-            if (backBtn) {
-                backBtn.addEventListener('click', () => this.exitGame());
-            }
-
-            const checkBtn = document.getElementById('form-word-check');
-            if (checkBtn) {
-                checkBtn.addEventListener('click', () => this.checkAnswer());
-            }
-
-            const nextBtn = document.getElementById('form-word-next');
-            if (nextBtn) {
-                nextBtn.addEventListener('click', () => this.nextRound());
-            }
-        },
-
-        startGame() {
-            this.currentRound = 0;
-            this.score = 0;
-            this.lives = 3;
-            this.correctAnswers = 0;
-            this.answered = false;
-
-            this.shuffleArray(this.words);
-            this.updateScoreDisplay();
-            this.updateLivesDisplay();
-            document.getElementById('form-word-total').textContent = this.totalRounds;
-
-            navigateTo('form-word-screen');
-            this.nextRound();
-        },
-
-        shuffleArray(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-            return array;
-        },
-
-        nextRound() {
-            this.currentRound++;
-            this.selectedLetters = [];
-            this.answered = false;
-
-            if (this.currentRound > this.totalRounds || this.lives <= 0) {
-                this.endGame();
-                return;
-            }
-
-            document.getElementById('form-word-round').textContent = this.currentRound;
-            document.getElementById('form-word-check').disabled = true;
-            document.getElementById('form-word-check').classList.remove('hidden');
-            document.getElementById('form-word-next').classList.add('hidden');
-
-            const feedback = document.getElementById('form-word-feedback');
-            if (feedback) {
-                feedback.classList.add('hidden');
-                feedback.classList.remove('correct', 'incorrect');
-            }
-
-            this.currentWord = this.words[(this.currentRound - 1) % this.words.length];
-            document.getElementById('form-word-target').textContent = this.currentWord.toUpperCase();
-
-            this.createSlots();
-            this.createOptions();
-        },
-
-        createSlots() {
-            const slotsContainer = document.getElementById('form-word-slots');
-            slotsContainer.innerHTML = '';
-
-            for (let i = 0; i < this.currentWord.length; i++) {
-                const slot = document.createElement('div');
-                slot.className = 'form-word-slot';
-                slot.dataset.index = i;
-                slot.innerHTML = `<span class="form-word-slot-letter">${i + 1}</span>`;
-                slot.addEventListener('click', () => this.removeFromSlot(i));
-                slotsContainer.appendChild(slot);
-            }
-        },
-
-        createOptions() {
-            const optionsContainer = document.getElementById('form-word-options');
-            optionsContainer.innerHTML = '';
-
-            // Create shuffled array of letters
-            const letters = this.currentWord.split('');
-            this.shuffleArray(letters);
-
-            letters.forEach((letter, index) => {
-                const option = document.createElement('div');
-                option.className = 'form-word-option';
-                option.dataset.letter = letter;
-                option.dataset.originalIndex = index;
-
-                const dots = BrailleData.BRAILLE_ALPHABET[letter.toLowerCase()] || [];
-                const dotsHtml = [1, 4, 2, 5, 3, 6].map(dotNum =>
-                    `<div class="form-word-option-dot ${dots.includes(dotNum) ? 'active' : ''}" data-dot="${dotNum}"></div>`
-                ).join('');
-
-                option.innerHTML = `
-                    <div class="form-word-option-cell">${dotsHtml}</div>
-                    <span class="form-word-option-label">${letter.toUpperCase()}</span>
-                `;
-                option.addEventListener('click', () => this.selectLetter(option, letter));
-                optionsContainer.appendChild(option);
-            });
-        },
-
-        selectLetter(optionEl, letter) {
-            if (optionEl.classList.contains('used') || this.answered) return;
-
-            // Find empty slot
-            const slots = document.querySelectorAll('.form-word-slot');
-            const emptySlot = Array.from(slots).find((_, i) => !this.selectedLetters[i]);
-
-            if (!emptySlot) return;
-
-            const slotIndex = parseInt(emptySlot.dataset.index);
-            this.selectedLetters[slotIndex] = { letter, optionEl };
-
-            // Update UI
-            optionEl.classList.add('used');
-            emptySlot.classList.add('filled');
-
-            // Copy braille display to slot
-            const dotsHtml = optionEl.querySelector('.form-word-option-cell').outerHTML;
-            emptySlot.innerHTML = `
-                <span class="form-word-slot-letter">${slotIndex + 1}</span>
-                ${dotsHtml}
-            `;
-
-            // Check if all slots are filled
-            const allFilled = this.selectedLetters.filter(Boolean).length === this.currentWord.length;
-            document.getElementById('form-word-check').disabled = !allFilled;
-        },
-
-        removeFromSlot(slotIndex) {
-            if (this.answered) return;
-            const slotData = this.selectedLetters[slotIndex];
-            if (!slotData) return;
-
-            // Restore option
-            slotData.optionEl.classList.remove('used');
-
-            // Clear slot
-            const slot = document.querySelector(`.form-word-slot[data-index="${slotIndex}"]`);
-            slot.classList.remove('filled');
-            slot.innerHTML = `<span class="form-word-slot-letter">${slotIndex + 1}</span>`;
-
-            this.selectedLetters[slotIndex] = null;
-            document.getElementById('form-word-check').disabled = true;
-        },
-
-        checkAnswer() {
-            this.answered = true;
-            const userWord = this.selectedLetters.map(s => s.letter).join('');
-            const isCorrect = userWord === this.currentWord;
-
-            const slots = document.querySelectorAll('.form-word-slot');
-            const feedback = document.getElementById('form-word-feedback');
-            const feedbackIcon = feedback?.querySelector('.game-feedback-icon');
-            const feedbackText = feedback?.querySelector('.game-feedback-text');
-
-            slots.forEach((slot, i) => {
-                if (this.selectedLetters[i]?.letter === this.currentWord[i]) {
-                    slot.classList.add('correct');
-                } else {
-                    slot.classList.add('incorrect');
-                }
-            });
-
-            if (isCorrect) {
-                this.score += 20;
-                this.correctAnswers++;
-                HapticService.success();
-                AudioService.playSound('correct');
-
-                if (feedback) {
-                    feedback.classList.remove('hidden', 'incorrect');
-                    feedback.classList.add('correct');
-                    if (feedbackIcon) feedbackIcon.textContent = '✓';
-                    if (feedbackText) feedbackText.textContent = '¡Excelente!';
-                }
-            } else {
-                this.lives--;
-                HapticService.error();
-                AudioService.playSound('incorrect');
-
-                if (feedback) {
-                    feedback.classList.remove('hidden', 'correct');
-                    feedback.classList.add('incorrect');
-                    if (feedbackIcon) feedbackIcon.textContent = '✗';
-                    if (feedbackText) feedbackText.textContent = 'Inténtalo de nuevo';
-                }
-
-                this.updateLivesDisplay();
-
-                if (this.lives <= 0) {
-                    setTimeout(() => this.endGame(), 1500);
-                    return;
-                }
-            }
-
-            this.updateScoreDisplay();
-            document.getElementById('form-word-check').classList.add('hidden');
-            document.getElementById('form-word-next').classList.remove('hidden');
-        },
-
-        updateScoreDisplay() {
-            document.getElementById('form-word-score').textContent = this.score;
-        },
-
-        updateLivesDisplay() {
-            const livesEl = document.getElementById('form-word-lives');
-            if (livesEl) {
-                livesEl.textContent = '❤️'.repeat(this.lives) + '🖤'.repeat(Math.max(0, 3 - this.lives));
-            }
-        },
-
-        exitGame() {
-            navigateTo('games-screen');
-        },
-
-        endGame() {
-            const accuracy = this.currentRound > 0
-                ? Math.round((this.correctAnswers / Math.min(this.currentRound, this.totalRounds)) * 100)
-                : 0;
-
-            const baseXP = this.score;
-            const accuracyBonus = accuracy >= 80 ? 30 : (accuracy >= 60 ? 15 : 0);
-            const completionBonus = this.lives > 0 ? 40 : 0;
-            const totalXP = baseXP + accuracyBonus + completionBonus;
-
-            state.progress.xp = (state.progress.xp || 0) + totalXP;
-            saveState();
-
-            let icon, title, subtitle;
-            if (this.lives <= 0) {
-                icon = '😢';
-                title = '¡Se acabaron las vidas!';
-                subtitle = 'Sigue practicando';
-            } else if (accuracy >= 80) {
-                icon = '🎉';
-                title = '¡Excelente!';
-                subtitle = '¡Dominas las palabras!';
-            } else if (accuracy >= 60) {
-                icon = '👍';
-                title = '¡Bien hecho!';
-                subtitle = 'Sigue mejorando';
-            } else {
-                icon = '💪';
-                title = '¡Buen intento!';
-                subtitle = 'Practica más para mejorar';
-            }
-
-            document.getElementById('game-over-icon').textContent = icon;
-            document.getElementById('game-over-title').textContent = title;
-            document.getElementById('game-over-subtitle').textContent = subtitle;
-            document.getElementById('game-over-score').textContent = this.score;
-            document.getElementById('game-over-correct').textContent = this.correctAnswers;
-            document.getElementById('game-over-accuracy').textContent = accuracy + '%';
-            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
-
-            navigateTo('game-over-screen');
-        }
-    };
-
-    // ================================
-    // Memory Game (Memoria Braille)
-    // ================================
-
-    const MemoryGame = {
-        cards: [],
-        flippedCards: [],
-        matchedPairs: 0,
-        totalPairs: 6,
-        moves: 0,
-        timer: 0,
-        timerInterval: null,
-        isProcessing: false,
-
-        init() {
-            this.setupEventListeners();
-        },
-
-        setupEventListeners() {
-            const playBtn = document.getElementById('play-memory');
-            if (playBtn) {
-                playBtn.addEventListener('click', () => this.startGame());
-            }
-
-            const backBtn = document.getElementById('memory-back-btn');
-            if (backBtn) {
-                backBtn.addEventListener('click', () => this.exitGame());
-            }
-        },
-
-        startGame() {
-            this.matchedPairs = 0;
-            this.moves = 0;
-            this.timer = 0;
-            this.flippedCards = [];
-            this.isProcessing = false;
-
-            if (this.timerInterval) {
-                clearInterval(this.timerInterval);
-            }
-
-            this.updateUI();
-            navigateTo('memory-screen');
-            this.createCards();
-            this.startTimer();
-        },
-
-        startTimer() {
-            this.timerInterval = setInterval(() => {
-                this.timer++;
-                const minutes = Math.floor(this.timer / 60);
-                const seconds = this.timer % 60;
-                document.getElementById('memory-timer').textContent =
-                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            }, 1000);
-        },
-
-        createCards() {
-            const grid = document.getElementById('memory-grid');
-            grid.innerHTML = '';
-
-            // Get 6 random letters
-            const allLetters = Object.keys(BrailleData.BRAILLE_ALPHABET);
-            const selectedLetters = this.shuffleArray([...allLetters]).slice(0, this.totalPairs);
-
-            // Create pairs (letter + braille)
-            this.cards = [];
-            selectedLetters.forEach((letter, i) => {
-                this.cards.push({ type: 'letter', value: letter, pairId: i });
-                this.cards.push({ type: 'braille', value: letter, pairId: i });
-            });
-
-            this.shuffleArray(this.cards);
-
-            // Create card elements
-            this.cards.forEach((card, index) => {
-                const cardEl = document.createElement('div');
-                cardEl.className = 'memory-card';
-                cardEl.dataset.index = index;
-
-                let backContent;
-                if (card.type === 'letter') {
-                    backContent = `<div class="memory-card-back letter">${card.value.toUpperCase()}</div>`;
-                } else {
-                    const dots = BrailleData.BRAILLE_ALPHABET[card.value] || [];
-                    const dotsHtml = [1, 4, 2, 5, 3, 6].map(dotNum =>
-                        `<div class="memory-braille-dot ${dots.includes(dotNum) ? 'active' : ''}"></div>`
-                    ).join('');
-                    backContent = `<div class="memory-card-back braille"><div class="memory-braille-cell">${dotsHtml}</div></div>`;
-                }
-
-                cardEl.innerHTML = `
-                    <div class="memory-card-inner">
-                        <div class="memory-card-front">
-                            <span class="material-symbols-outlined">question_mark</span>
-                        </div>
-                        ${backContent}
-                    </div>
-                `;
-
-                cardEl.addEventListener('click', () => this.flipCard(index));
-                grid.appendChild(cardEl);
-            });
-        },
-
-        shuffleArray(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-            return array;
-        },
-
-        flipCard(index) {
-            if (this.isProcessing) return;
-
-            const cardEl = document.querySelectorAll('.memory-card')[index];
-            const card = this.cards[index];
-
-            if (cardEl.classList.contains('flipped') || cardEl.classList.contains('matched')) return;
-            if (this.flippedCards.length >= 2) return;
-
-            // Flip the card
-            cardEl.classList.add('flipped');
-            this.flippedCards.push({ index, card, element: cardEl });
-            HapticService.tap();
-
-            // Check for match if 2 cards flipped
-            if (this.flippedCards.length === 2) {
-                this.moves++;
-                document.getElementById('memory-moves').textContent = this.moves;
-                this.checkMatch();
-            }
-        },
-
-        checkMatch() {
-            this.isProcessing = true;
-            const [first, second] = this.flippedCards;
-
-            const isMatch = first.card.pairId === second.card.pairId && first.card.type !== second.card.type;
-
-            setTimeout(() => {
-                if (isMatch) {
-                    first.element.classList.add('matched');
-                    second.element.classList.add('matched');
-                    this.matchedPairs++;
-                    document.getElementById('memory-pairs').textContent = this.matchedPairs;
-                    HapticService.success();
-                    AudioService.playSound('correct');
-
-                    if (this.matchedPairs === this.totalPairs) {
-                        setTimeout(() => this.endGame(), 500);
-                    }
-                } else {
-                    first.element.classList.remove('flipped');
-                    second.element.classList.remove('flipped');
-                    HapticService.error();
-                }
-
-                this.flippedCards = [];
-                this.isProcessing = false;
-            }, isMatch ? 500 : 1000);
-        },
-
-        updateUI() {
-            document.getElementById('memory-pairs').textContent = '0';
-            document.getElementById('memory-total-pairs').textContent = this.totalPairs;
-            document.getElementById('memory-moves').textContent = '0';
-            document.getElementById('memory-timer').textContent = '0:00';
-        },
-
-        exitGame() {
-            if (this.timerInterval) {
-                clearInterval(this.timerInterval);
-            }
-            navigateTo('games-screen');
-        },
-
-        endGame() {
-            if (this.timerInterval) {
-                clearInterval(this.timerInterval);
-            }
-
-            // Calculate score: bonus for fewer moves and faster time
-            const moveScore = Math.max(0, 100 - (this.moves - this.totalPairs) * 5);
-            const timeScore = Math.max(0, 100 - this.timer);
-            const totalScore = Math.round((moveScore + timeScore) / 2);
-
-            // XP based on performance
-            const baseXP = 50;
-            const moveBonus = this.moves <= this.totalPairs + 4 ? 30 : (this.moves <= this.totalPairs + 8 ? 15 : 0);
-            const timeBonus = this.timer <= 60 ? 30 : (this.timer <= 120 ? 15 : 0);
-            const totalXP = baseXP + moveBonus + timeBonus;
-
-            state.progress.xp = (state.progress.xp || 0) + totalXP;
-            saveState();
-
-            let icon, title, subtitle;
-            if (this.moves <= this.totalPairs + 2) {
-                icon = '🧠';
-                title = '¡Memoria perfecta!';
-                subtitle = 'Increíble concentración';
-            } else if (this.moves <= this.totalPairs + 6) {
-                icon = '🎉';
-                title = '¡Excelente!';
-                subtitle = 'Gran memoria';
-            } else {
-                icon = '👍';
-                title = '¡Completado!';
-                subtitle = 'Sigue practicando';
-            }
-
-            document.getElementById('game-over-icon').textContent = icon;
-            document.getElementById('game-over-title').textContent = title;
-            document.getElementById('game-over-subtitle').textContent = subtitle;
-            document.getElementById('game-over-score').textContent = totalScore;
-            document.getElementById('game-over-correct').textContent = this.matchedPairs;
-            document.getElementById('game-over-accuracy').textContent = `${this.moves} mov.`;
-            document.getElementById('game-over-xp-value').textContent = '+' + totalXP + ' XP';
-
-            navigateTo('game-over-screen');
-        }
-    };
+    const GuessLetterGame = createGuessLetterGame(gameDeps);
+    const FormWordGame = createFormWordGame(gameDeps);
+    const MemoryGame = createMemoryGame(gameDeps);
 
     // ================================
     // Initialization
     // ================================
 
     function init() {
-        loadState();
-        applySettings();
-        setupEventListeners();
-        PWAService.init();
-        GuessLetterGame.init();
-        FormWordGame.init();
-        MemoryGame.init();
+        console.log('🛠️ Initializing Braillito...');
+        try {
+            loadState();
+            console.log('✅ State loaded');
 
-        // Apply initial toggle states on onboarding
-        document.getElementById('haptic-toggle')?.setAttribute('aria-checked', state.settings.hapticFeedback);
-        document.getElementById('screen-reader-toggle')?.setAttribute('aria-checked', state.settings.screenReader);
-        document.getElementById('contrast-toggle')?.setAttribute('aria-checked', state.settings.highContrast);
+            // Ensure lesson narration stays enabled when reader is off
+            SpeechController.ensureLessonAudioEnabled('init');
+
+            applySettings();
+            console.log('✅ Settings applied');
+
+            setupEventListeners();
+            console.log('✅ Event listeners attached');
+
+            PWAService.init();
+            console.log('✅ PWA initialized');
+
+            GuessLetterGame.init();
+            FormWordGame.init();
+            MemoryGame.init();
+            console.log('✅ Games initialized');
+
+            // Apply initial toggle states on onboarding
+            document.getElementById('haptic-toggle')?.setAttribute('aria-checked', state.settings.hapticFeedback);
+            document.getElementById('screen-reader-toggle')?.setAttribute('aria-checked', state.settings.screenReader);
+            document.getElementById('contrast-toggle')?.setAttribute('aria-checked', state.settings.highContrast);
+
+            console.log('🎉 Initialization complete!');
+        } catch (error) {
+            console.error('❌ Critical initialization error:', error);
+            // Fallback: try to attach critical listeners anyway
+            try {
+                setupEventListeners();
+            } catch (e) {
+                console.error('❌ Fallback also failed:', e);
+            }
+        }
     }
 
     // Start the app
@@ -3487,5 +4002,29 @@ injectSpeedInsights();
     } else {
         init();
     }
+
+    // Global UI Fixes: Blur buttons/interactive elements after click to prevent "sticky" focus rings on mobile/touch
+    document.addEventListener('click', (e) => {
+        // Target all buttons and major interactive sections broadly
+        const target = e.target.closest('button, [role="button"], input[type="button"], input[type="submit"], .continue-card, .back-btn, .card-option, .size-option');
+        if (target) {
+            // Use a slight delay to allow the default action to complete but quickly clear the visual focus
+            setTimeout(() => {
+                if (document.activeElement === target || target.contains(document.activeElement)) {
+                    document.activeElement.blur();
+                }
+            }, 100);
+        }
+    }, true);
+
+    // Prevent focus on cards/buttons on initial load
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            if (document.activeElement &&
+                !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+                document.activeElement.blur();
+            }
+        }, 300);
+    });
 
 })();

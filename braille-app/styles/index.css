@@ -1,0 +1,20 @@
+/* ================================
+   BRAILLITO - Main Styles Index
+   ================================
+   
+   This file imports all CSS modules.
+   
+   Structure:
+   - base.css: Design tokens, reset, typography, app container
+   - components.css: Buttons, toggles, cards, forms
+   - (legacy) Remaining screen-specific styles below
+   
+   TODO: Continue extracting screen-specific styles to:
+   - screens/welcome.css
+   - screens/dashboard.css
+   - screens/lesson.css
+   - screens/games.css
+   ================================ */
+
+@import './styles/base.css';
+@import './styles/components.css';
