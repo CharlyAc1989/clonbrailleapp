@@ -2335,6 +2335,14 @@ function createMemoryGame(dependencies) {
             } else if (level.gameType === 'pick') {
                 navigateTo('game-pick-screen');
                 this.setupPickGame();
+            } else if (level.gameType === 'observe') {
+                // OBSERVE: Show patterns without user input, similar to instruction
+                navigateTo('game-observe-screen');
+                this.setupObserveGame();
+            } else if (level.gameType === 'words') {
+                // WORDS: Build words letter by letter
+                navigateTo('game-words-screen');
+                this.setupWordsGame();
             } else {
                 // For mixed mode, the first question determines the screen
                 this.nextRound();
@@ -2344,8 +2352,42 @@ function createMemoryGame(dependencies) {
             this.nextRound();
         },
 
+        // Setup OBSERVE game - demonstration without errors
+        setupObserveGame() {
+            // Will show pattern animations without user input
+            // Continue button appears after pattern is shown
+        },
+
+        // Setup WORDS game - build words letter by letter
+        setupWordsGame() {
+            this.currentWordIndex = 0;
+            this.currentLetterInWord = 0;
+        },
+
         generateQuestions(level) {
             const questions = [];
+
+            // For WORDS gameType, use words array
+            if (level.gameType === 'words' && level.words && level.words.length > 0) {
+                for (let i = 0; i < level.rounds; i++) {
+                    const word = level.words[i % level.words.length];
+                    questions.push({
+                        word: word,
+                        type: 'words'
+                    });
+                }
+                return questions;
+            }
+
+            // For OBSERVE gameType, create observation items
+            if (level.gameType === 'observe') {
+                questions.push({
+                    type: 'observe',
+                    content: level.description
+                });
+                return questions;
+            }
+
             const chars = level.letters;
 
             for (let i = 0; i < level.rounds; i++) {
@@ -2366,10 +2408,23 @@ function createMemoryGame(dependencies) {
                         { name: 'Signo de número', dots: BrailleData.SPECIAL_SIGNS.number },
                         { name: `Número ${char}`, dots: BrailleData.BRAILLE_NUMBERS[char] }
                     ];
-                } else if (BrailleData.BRAILLE_SYMBOLS[char]) {
+                } else if (BrailleData.BRAILLE_SYMBOLS && BrailleData.BRAILLE_SYMBOLS[char]) {
                     cells = [{ name: `Símbolo ${char}`, dots: BrailleData.BRAILLE_SYMBOLS[char] }];
+                } else if (BrailleData.BRAILLE_ACCENTS && BrailleData.BRAILLE_ACCENTS[char]) {
+                    // Handle accented vowels (á, é, í, ó, ú, ü)
+                    cells = [{ name: `Letra ${char}`, dots: BrailleData.BRAILLE_ACCENTS[char] }];
+                } else if (BrailleData.BRAILLE_MATH && BrailleData.BRAILLE_MATH[char]) {
+                    cells = [{ name: `Símbolo ${char}`, dots: BrailleData.BRAILLE_MATH[char] }];
+                } else if (BrailleData.BRAILLE_DIGITAL && BrailleData.BRAILLE_DIGITAL[char]) {
+                    cells = [{ name: `Símbolo ${char}`, dots: BrailleData.BRAILLE_DIGITAL[char] }];
                 } else {
-                    cells = [{ name: `Letra ${char}`, dots: BrailleData.BRAILLE_ALPHABET[char.toLowerCase()] }];
+                    const dots = BrailleData.BRAILLE_ALPHABET[char.toLowerCase()];
+                    if (dots) {
+                        cells = [{ name: `Letra ${char}`, dots: dots }];
+                    } else {
+                        // Fallback - skip invalid characters
+                        continue;
+                    }
                 }
 
                 questions.push({
@@ -2521,6 +2576,54 @@ function createMemoryGame(dependencies) {
                 // Announce
                 if (state.settings.screenReader) {
                     AudioService.speak(`¿Qué celda es: ${question.char}?`);
+                }
+            } else if (type === 'observe') {
+                // OBSERVE: Show the level description and complete
+                // Use instruction screen approach - show info then advance
+                navigateTo('instruction-screen');
+
+                const instructionText = document.getElementById('instruction-text');
+                if (instructionText) {
+                    instructionText.textContent = question.content || this.currentLevel.description;
+                }
+
+                // Auto-complete observe levels after showing content
+                setTimeout(() => {
+                    this.correctAnswers = 1;
+                    this.endGame();
+                }, 3000);
+            } else if (type === 'words') {
+                // WORDS: Build words letter by letter using build screen
+                navigateTo('game-build-screen');
+                document.getElementById('game-progress-fill').style.width = `${progress}%`;
+                document.getElementById('game-progress-text').textContent = `${this.currentRound} / ${this.totalRounds}`;
+
+                // For words, show the word and build first letter
+                const word = question.word;
+                const firstLetter = word[0].toLowerCase();
+
+                // Get dots for first letter
+                let dots = BrailleData.BRAILLE_ALPHABET[firstLetter] ||
+                    BrailleData.BRAILLE_ACCENTS[firstLetter] ||
+                    BrailleData.BRAILLE_SYMBOLS[firstLetter];
+
+                // Create a question format compatible with build checking
+                question.char = firstLetter;
+                question.cells = [{ name: `Letra ${firstLetter}`, dots: dots }];
+
+                const buildTargetLetter = document.getElementById('build-target-letter');
+                if (buildTargetLetter) {
+                    buildTargetLetter.textContent = firstLetter.toUpperCase();
+                    buildTargetLetter.setAttribute('aria-label', `Palabra: ${word}, letra: ${firstLetter}`);
+                }
+
+                const buildMsgEl = document.getElementById('build-game-message');
+                if (buildMsgEl) {
+                    buildMsgEl.textContent = `Construye la palabra "${word}" - letra por letra`;
+                }
+
+                if (state.settings.screenReader) {
+                    AudioService.speak(`Construye la palabra ${word}. Primero la letra ${firstLetter}`);
                 }
             }
         },
