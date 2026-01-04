@@ -3455,14 +3455,20 @@ function createMemoryGame(dependencies) {
 
     function getChapterTitle(chapterNum) {
         const titles = {
-            1: 'Los Fundamentos',
-            2: 'Vocales y Más',
-            3: 'Construyendo Palabras',
-            4: 'Alfabeto Completo',
-            5: 'Maestría',
-            6: 'Mayúsculas',
-            7: 'Números',
-            8: 'Símbolos'
+            0: 'Orientación',
+            1: 'Vocales',
+            2: 'Consonantes Útiles',
+            3: 'Familias Braille',
+            4: 'Expansión del Alfabeto',
+            5: 'Alfabeto Completo + Ñ',
+            6: 'Fluidez',
+            7: 'Maestría',
+            8: 'Mayúsculas',
+            9: 'Números',
+            10: 'Puntuación',
+            11: 'Vocales con Tilde',
+            12: 'Diéresis',
+            13: 'Matemáticas y Digital'
         };
         return titles[chapterNum] || `Capítulo ${chapterNum}`;
     }
