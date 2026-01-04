@@ -2150,6 +2150,7 @@ function createMemoryGame(dependencies) {
             clearTimeout(this.animationTimeout);
             this.isAnimationRunning = false;
             AudioService.stop(); // Stop any playing audio
+            GameEngine.observeAnimationActive = false; // Cancel any observe animation
             this.clearDots(); // Clear dots immediately when advancing
             this.currentLetterIdx++;
             this.playNextLetter();
@@ -2168,6 +2169,7 @@ function createMemoryGame(dependencies) {
             clearTimeout(this.animationTimeout);
             this.isAnimationRunning = false;
             AudioService.stop(); // Stop any playing audio
+            GameEngine.observeAnimationActive = false; // Cancel any observe animation
             this.finish();
         },
 
@@ -2602,17 +2604,23 @@ function createMemoryGame(dependencies) {
                     dot.classList.remove('filled', 'active', 'animating');
                 });
 
-                // Flag to track if animation should continue
-                let animationCanceled = false;
+                // Set flag to allow animation to run (can be canceled from outside)
+                this.observeAnimationActive = true;
 
                 // Async function to run speech sequence properly
                 const runObserveSequence = async () => {
+                    // Check if still active and on correct screen
+                    const isActive = () => this.observeAnimationActive &&
+                        document.getElementById('instruction-screen')?.classList.contains('active');
+
                     // 1. First speak the description
-                    await AudioService.speakAndWait(level.description);
+                    if (isActive()) {
+                        await AudioService.speakAndWait(level.description);
+                    }
 
                     // 2. Then animate and speak each dot sequentially
                     for (const dotNum of dotsToShow) {
-                        if (animationCanceled) break;
+                        if (!isActive()) break;
 
                         const dotEl = document.querySelector(`#instruction-cell .braille-lesson-dot[data-dot="${dotNum}"]`);
                         if (dotEl) {
@@ -2627,17 +2635,11 @@ function createMemoryGame(dependencies) {
                 // Start the sequence
                 runObserveSequence();
 
-                // Show next button
+                // Show next button - the onclick will be handled by the existing event listener
+                // which calls InstructionEngine.next() -> we need to cancel animation there too
                 const nextBtn = document.getElementById('instruction-next-btn');
                 if (nextBtn) {
                     nextBtn.style.display = 'block';
-                    nextBtn.onclick = () => {
-                        // Stop any ongoing speech and cancel animation
-                        animationCanceled = true;
-                        AudioService.stop();
-                        this.correctAnswers = 1;
-                        this.endGame();
-                    };
                 }
 
                 // Update progress
@@ -3083,6 +3085,7 @@ function createMemoryGame(dependencies) {
 
         exitGame() {
             AudioService.stop(); // Stop any playing audio
+            this.observeAnimationActive = false; // Cancel any observe animation
             navigateTo('dashboard-screen');
             updateDashboard();
         }
