@@ -2600,31 +2600,39 @@ function createMemoryGame(dependencies) {
                     dot.classList.remove('filled', 'active', 'animating');
                 });
 
-                // First, speak the description/intro
-                const introText = level.description;
-                AudioService.speak(introText);
+                // Flag to track if animation should continue
+                let animationCanceled = false;
 
-                // Calculate delay for intro to finish (roughly 120ms per character, max 8 seconds)
-                const introDelay = Math.min(introText.length * 120, 8000);
+                // Async function to run speech sequence properly
+                const runObserveSequence = async () => {
+                    // 1. First speak the description
+                    await AudioService.speakAndWait(level.description);
 
-                // Animate dots sequentially AFTER intro finishes
-                dotsToShow.forEach((dotNum, index) => {
-                    setTimeout(() => {
+                    // 2. Then animate and speak each dot sequentially
+                    for (const dotNum of dotsToShow) {
+                        if (animationCanceled) break;
+
                         const dotEl = document.querySelector(`#instruction-cell .braille-lesson-dot[data-dot="${dotNum}"]`);
                         if (dotEl) {
                             dotEl.classList.add('filled', 'animating');
-                            // Speak dot position
-                            const position = BrailleData.DOT_POSITIONS[dotNum];
-                            AudioService.speak(`Punto ${dotNum}, ${position}`);
                         }
-                    }, introDelay + (index * 800));
-                });
 
-                // Show next button after all dots are shown
+                        const position = BrailleData.DOT_POSITIONS[dotNum];
+                        await AudioService.speakAndWait(`Punto ${dotNum}, ${position}`);
+                    }
+                };
+
+                // Start the sequence
+                runObserveSequence();
+
+                // Show next button
                 const nextBtn = document.getElementById('instruction-next-btn');
                 if (nextBtn) {
                     nextBtn.style.display = 'block';
                     nextBtn.onclick = () => {
+                        // Stop any ongoing speech and cancel animation
+                        animationCanceled = true;
+                        AudioService.stop();
                         this.correctAnswers = 1;
                         this.endGame();
                     };
