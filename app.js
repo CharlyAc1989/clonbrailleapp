@@ -4632,51 +4632,64 @@ function createMemoryGame(dependencies) {
         });
 
         // Debug buttons
-        // Use Event Delegation to ensure they work even if elements not ready
-        document.body.addEventListener('click', (e) => {
-            const unlockBtn = e.target.closest('#debug-unlock-all');
-            const resetBtn = e.target.closest('#debug-reset-progress');
-
-            if (unlockBtn) {
-                if (confirm('¿Desbloquear todos los niveles y contenido Premium?')) {
-                    // Unlock all levels
-                    BrailleData.LEVELS.forEach(level => {
-                        if (!state.progress.levelsCompleted.includes(level.id)) {
-                            state.progress.levelsCompleted.push(level.id);
-                        }
-                    });
-
-                    // Give lots of XP to unlock everything
-                    state.progress.totalXP = 10000;
-
-                    saveState();
-                    alert('¡Todo desbloqueado! Disfruta probando.');
-                    navigateTo('dashboard-screen');
-                    updateDashboard();
-                }
+        // Debug buttons - Global functions for HTML access
+        window.debugUnlockAll = () => {
+            // Ensure state is ready
+            if (typeof state === 'undefined' || !state.progress) {
+                console.error('State not ready');
+                alert('Error: La aplicación no está lista. Intenta recargar.');
+                return;
             }
 
-            if (resetBtn) {
-                if (confirm('⚠️ ¿Estás seguro de reiniciar TODO el progreso? Esto no se puede deshacer.')) {
-                    state.progress = {
-                        totalXP: 0,
-                        streak: 0,
-                        lastLogin: Date.now(),
-                        levelsCompleted: [],
-                        achievements: [],
-                        settings: {
-                            soundEnabled: true,
-                            hapticsEnabled: true,
-                            voiceAssistant: false
-                        }
-                    };
-                    saveState();
-                    alert('Progreso reiniciado.');
-                    navigateTo('dashboard-screen');
-                    updateDashboard();
-                }
+            if (confirm('¿Desbloquear todos los niveles y contenido Premium?')) {
+                // Unlock all levels
+                BrailleData.LEVELS.forEach(level => {
+                    if (!state.progress.levelsCompleted.includes(level.id)) {
+                        state.progress.levelsCompleted.push(level.id);
+                    }
+                });
+
+                // Give lots of XP to unlock everything
+                state.progress.totalXP = 10000;
+
+                saveState();
+
+                // Visual feedback
+                const btn = document.getElementById('debug-unlock-all');
+                if (btn) btn.style.backgroundColor = '#dcfce7';
+
+                alert('¡Todo desbloqueado! Disfruta probando.');
+                navigateTo('dashboard-screen');
+                updateDashboard();
             }
-        });
+        };
+
+        window.debugResetProgress = () => {
+            if (typeof state === 'undefined' || !state.progress) {
+                console.error('State not ready');
+                alert('Error: La aplicación no está lista. Intenta recargar.');
+                return;
+            }
+
+            if (confirm('⚠️ ¿Estás seguro de reiniciar TODO el progreso? Esto no se puede deshacer.')) {
+                state.progress = {
+                    totalXP: 0,
+                    streak: 0,
+                    lastLogin: Date.now(),
+                    levelsCompleted: [],
+                    achievements: [],
+                    settings: {
+                        soundEnabled: true,
+                        hapticsEnabled: true,
+                        voiceAssistant: false
+                    }
+                };
+                saveState();
+                alert('Progreso reiniciado.');
+                navigateTo('dashboard-screen');
+                updateDashboard();
+            }
+        };
 
         // Logout Button
         document.getElementById('settings-logout')?.addEventListener('click', async () => {

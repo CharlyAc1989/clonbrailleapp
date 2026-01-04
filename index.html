@@ -2028,7 +2028,8 @@
                 <div class="settings-section-new" style="border: 2px dashed #f59e0b; background: #fffbeb;">
                     <h3 class="settings-section-title-new" style="color: #d97706;">Zona de Pruebas 🚧</h3>
                     <div class="settings-card-new">
-                        <button id="debug-unlock-all" class="settings-row-new">
+                        <button id="debug-unlock-all" class="settings-row-new"
+                            onclick="window.debugUnlockAll && window.debugUnlockAll()">
                             <div class="settings-row-left">
                                 <div class="settings-icon orange">
                                     <span class="material-symbols-outlined">lock_open</span>
@@ -2038,7 +2039,8 @@
                             <span class="material-symbols-outlined chevron">chevron_right</span>
                         </button>
                         <div class="settings-divider"></div>
-                        <button id="debug-reset-progress" class="settings-row-new">
+                        <button id="debug-reset-progress" class="settings-row-new"
+                            onclick="window.debugResetProgress && window.debugResetProgress()">
                             <div class="settings-row-left">
                                 <div class="settings-icon red">
                                     <span class="material-symbols-outlined">restart_alt</span>
