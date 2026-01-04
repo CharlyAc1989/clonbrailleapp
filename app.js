@@ -4632,43 +4632,49 @@ function createMemoryGame(dependencies) {
         });
 
         // Debug buttons
-        document.getElementById('debug-unlock-all')?.addEventListener('click', () => {
-            if (confirm('¿Desbloquear todos los niveles y contenido Premium?')) {
-                // Unlock all levels
-                BrailleData.LEVELS.forEach(level => {
-                    if (!state.progress.levelsCompleted.includes(level.id)) {
-                        state.progress.levelsCompleted.push(level.id);
-                    }
-                });
+        // Use Event Delegation to ensure they work even if elements not ready
+        document.body.addEventListener('click', (e) => {
+            const unlockBtn = e.target.closest('#debug-unlock-all');
+            const resetBtn = e.target.closest('#debug-reset-progress');
 
-                // Give lots of XP to unlock everything
-                state.progress.totalXP = 10000;
+            if (unlockBtn) {
+                if (confirm('¿Desbloquear todos los niveles y contenido Premium?')) {
+                    // Unlock all levels
+                    BrailleData.LEVELS.forEach(level => {
+                        if (!state.progress.levelsCompleted.includes(level.id)) {
+                            state.progress.levelsCompleted.push(level.id);
+                        }
+                    });
 
-                saveState();
-                alert('¡Todo desbloqueado! Disfruta probando.');
-                navigateTo('dashboard-screen');
-                updateDashboard();
+                    // Give lots of XP to unlock everything
+                    state.progress.totalXP = 10000;
+
+                    saveState();
+                    alert('¡Todo desbloqueado! Disfruta probando.');
+                    navigateTo('dashboard-screen');
+                    updateDashboard();
+                }
             }
-        });
 
-        document.getElementById('debug-reset-progress')?.addEventListener('click', () => {
-            if (confirm('⚠️ ¿Estás seguro de reiniciar TODO el progreso? Esto no se puede deshacer.')) {
-                state.progress = {
-                    totalXP: 0,
-                    streak: 0,
-                    lastLogin: Date.now(),
-                    levelsCompleted: [],
-                    achievements: [],
-                    settings: {
-                        soundEnabled: true,
-                        hapticsEnabled: true,
-                        voiceAssistant: false
-                    }
-                };
-                saveState();
-                alert('Progreso reiniciado.');
-                navigateTo('dashboard-screen');
-                updateDashboard();
+            if (resetBtn) {
+                if (confirm('⚠️ ¿Estás seguro de reiniciar TODO el progreso? Esto no se puede deshacer.')) {
+                    state.progress = {
+                        totalXP: 0,
+                        streak: 0,
+                        lastLogin: Date.now(),
+                        levelsCompleted: [],
+                        achievements: [],
+                        settings: {
+                            soundEnabled: true,
+                            hapticsEnabled: true,
+                            voiceAssistant: false
+                        }
+                    };
+                    saveState();
+                    alert('Progreso reiniciado.');
+                    navigateTo('dashboard-screen');
+                    updateDashboard();
+                }
             }
         });
 
