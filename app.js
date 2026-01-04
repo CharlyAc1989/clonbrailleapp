@@ -2600,7 +2600,14 @@ function createMemoryGame(dependencies) {
                     dot.classList.remove('filled', 'active', 'animating');
                 });
 
-                // Animate dots sequentially
+                // First, speak the description/intro
+                const introText = level.description;
+                AudioService.speak(introText);
+
+                // Calculate delay for intro to finish (roughly 100ms per character)
+                const introDelay = Math.min(introText.length * 60, 5000);
+
+                // Animate dots sequentially AFTER intro finishes
                 dotsToShow.forEach((dotNum, index) => {
                     setTimeout(() => {
                         const dotEl = document.querySelector(`#instruction-cell .braille-lesson-dot[data-dot="${dotNum}"]`);
@@ -2610,7 +2617,7 @@ function createMemoryGame(dependencies) {
                             const position = BrailleData.DOT_POSITIONS[dotNum];
                             AudioService.speak(`Punto ${dotNum}, ${position}`);
                         }
-                    }, index * 800);
+                    }, introDelay + (index * 800));
                 });
 
                 // Show next button after all dots are shown
