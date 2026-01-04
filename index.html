@@ -1267,79 +1267,81 @@
             </div>
         </section>
 
-        <!-- Word Builder Game Screen -->
-        <section id="game-words-screen" class="screen lesson-screen-new lesson-shell" role="main"
+        <!-- Word Builder Game Screen - Modern Design -->
+        <section id="game-words-screen" class="screen words-game-screen" role="main"
             aria-label="Juego Constructor de Palabras">
-            <!-- Background decorations -->
-            <div class="pick-bg-pattern"></div>
-            <div class="pick-bg-glow"></div>
-
             <!-- Header -->
-            <header class="lesson-header-new">
-                <button id="words-exit-btn" class="lesson-close-btn" aria-label="Cerrar juego">
-                    <span class="material-symbols-outlined">close</span>
+            <header class="words-header">
+                <button id="words-exit-btn" class="words-back-btn" aria-label="Volver">
+                    <span class="material-symbols-outlined">arrow_back</span>
                 </button>
-                <div class="lesson-progress-bar-container">
-                    <div id="words-progress-fill" class="lesson-progress-bar-fill" style="width: 0%">
-                        <div class="lesson-progress-shine"></div>
-                    </div>
-                    <span id="words-progress-text" class="sr-only">0%</span>
-                </div>
-                <button class="lesson-audio-toggle" aria-label="Toggle audio">
-                    <span class="material-symbols-outlined">volume_up</span>
-                </button>
+                <h2 id="words-game-title" class="words-header-title">Palabras: Nivel 1</h2>
+                <button class="words-exit-text" aria-label="Salir del juego">Salir</button>
             </header>
 
-            <!-- Main Content -->
-            <main class="lesson-main-content">
-                <div class="lesson-content-area">
-                    <!-- Word Title -->
-                    <div class="words-title-row">
-                        <h2 id="words-game-title">Palabras: Nivel 1</h2>
-                    </div>
+            <!-- Progress Bar -->
+            <div class="words-progress-section">
+                <div class="words-progress-labels">
+                    <p class="words-progress-label">Progreso de lección</p>
+                    <p id="words-progress-percentage" class="words-progress-percent">25%</p>
+                </div>
+                <div class="words-progress-track">
+                    <div id="words-progress-fill" class="words-progress-bar"></div>
+                </div>
+            </div>
 
-                    <!-- Word Slots Display -->
-                    <div class="words-slots-container" id="words-slots-container">
+            <!-- Main Content Area -->
+            <main class="words-main-content">
+                <!-- Word Slots -->
+                <div class="words-slots-wrapper">
+                    <div id="words-slots-container" class="words-slots-container">
                         <!-- Generated dynamically -->
                     </div>
+                </div>
 
-                    <!-- Instruction -->
-                    <div class="words-instruction">
-                        <span>Forma la letra</span>
-                        <span id="words-target-letter" class="words-target-letter">'A'</span>
-                    </div>
+                <!-- Instruction Text -->
+                <div class="words-instruction-text">
+                    <p>Forma la letra <span id="words-target-letter" class="words-target-letter-highlight">'C'</span>
+                    </p>
+                </div>
 
-                    <!-- Braille Cell -->
-                    <div class="lesson-braille-container">
-                        <div class="lesson-braille-cell-single" id="words-cell-container">
-                            <div class="braille-lesson-cell" id="words-braille-input">
-                                <button class="braille-lesson-dot dot-btn" data-dot="1" aria-label="Punto 1">1</button>
-                                <button class="braille-lesson-dot dot-btn" data-dot="4" aria-label="Punto 4">4</button>
-                                <button class="braille-lesson-dot dot-btn" data-dot="2" aria-label="Punto 2">2</button>
-                                <button class="braille-lesson-dot dot-btn" data-dot="5" aria-label="Punto 5">5</button>
-                                <button class="braille-lesson-dot dot-btn" data-dot="3" aria-label="Punto 3">3</button>
-                                <button class="braille-lesson-dot dot-btn" data-dot="6" aria-label="Punto 6">6</button>
-                            </div>
+                <!-- Braille Cell -->
+                <div class="words-braille-wrapper">
+                    <div class="words-braille-cell" id="words-braille-input">
+                        <!-- Decorative screws -->
+                        <span class="words-cell-screw top-left"></span>
+                        <span class="words-cell-screw top-right"></span>
+                        <span class="words-cell-screw bottom-left"></span>
+                        <span class="words-cell-screw bottom-right"></span>
+
+                        <!-- Braille dots grid -->
+                        <div class="words-dots-grid">
+                            <button class="words-dot" data-dot="1" aria-label="Punto 1"></button>
+                            <button class="words-dot" data-dot="4" aria-label="Punto 4"></button>
+                            <button class="words-dot" data-dot="2" aria-label="Punto 2"></button>
+                            <button class="words-dot" data-dot="5" aria-label="Punto 5"></button>
+                            <button class="words-dot" data-dot="3" aria-label="Punto 3"></button>
+                            <button class="words-dot" data-dot="6" aria-label="Punto 6"></button>
                         </div>
                     </div>
                 </div>
             </main>
 
-            <!-- Footer -->
-            <footer class="lesson-footer-new">
-                <button id="words-check-btn" class="lesson-btn-primary">
-                    COMPROBAR
+            <!-- Footer Button -->
+            <footer class="words-footer">
+                <button id="words-check-btn" class="words-check-button">
+                    <span>COMPROBAR</span>
                     <span class="material-symbols-outlined">check_circle</span>
                 </button>
             </footer>
 
             <!-- Feedback Overlay -->
-            <div id="words-feedback-overlay" class="feedback-overlay hidden" role="alertdialog" aria-modal="true">
-                <div class="feedback-content">
-                    <div id="words-feedback-icon" class="feedback-icon" aria-hidden="true">✓</div>
-                    <h2 id="words-feedback-title">¡Correcto!</h2>
-                    <p id="words-feedback-message">¡Muy bien!</p>
-                    <button id="words-feedback-continue-btn" class="btn btn-primary">Continuar</button>
+            <div id="words-feedback-overlay" class="words-feedback-overlay hidden">
+                <div class="words-feedback-content">
+                    <div id="words-feedback-icon" class="words-feedback-icon">✓</div>
+                    <h2 id="words-feedback-title" class="words-feedback-title">¡Correcto!</h2>
+                    <p id="words-feedback-message" class="words-feedback-message">¡Muy bien!</p>
+                    <button id="words-feedback-continue-btn" class="words-feedback-btn">Continuar</button>
                 </div>
             </div>
         </section>

@@ -2373,7 +2373,7 @@ function createMemoryGame(dependencies) {
             // Setup dot click handlers for words game
             const wordsCell = document.getElementById('words-braille-input');
             if (wordsCell) {
-                wordsCell.querySelectorAll('.braille-lesson-dot').forEach(dot => {
+                wordsCell.querySelectorAll('.words-dot').forEach(dot => {
                     dot.classList.remove('filled');
                     dot.onclick = () => {
                         const dotNum = parseInt(dot.dataset.dot);
@@ -2403,27 +2403,28 @@ function createMemoryGame(dependencies) {
             let html = '';
             letters.forEach((letter, index) => {
                 let stateClass = 'upcoming';
-                let checkmark = '';
+                let badge = '';
 
                 if (index < currentLetterIndex) {
                     stateClass = 'completed';
-                    checkmark = '<span class="word-slot-check">✓</span>';
                 } else if (index === currentLetterIndex) {
                     stateClass = 'current';
+                    badge = '<div class="word-slot-badge">ACTUAL</div>';
                 }
 
                 // Get braille pattern for mini display
                 const pattern = BrailleData.ALPHABET[letter.toLowerCase()] || [];
                 const miniDots = [1, 4, 2, 5, 3, 6].map(d =>
-                    `<span class="mini-dot ${pattern.includes(d) ? 'filled' : ''}"></span>`
+                    `<span class="word-slot-mini-dot ${pattern.includes(d) ? 'filled' : ''}"></span>`
                 ).join('');
 
                 html += `
-                    <div class="word-slot ${stateClass}">
-                        ${checkmark}
-                        <span class="word-slot-letter">${letter.toUpperCase()}</span>
-                        <div class="word-slot-braille">${miniDots}</div>
-                        ${index === currentLetterIndex ? '<span class="word-slot-label">ACTUAL</span>' : ''}
+                    <div class="word-slot-card ${stateClass}">
+                        <div class="word-slot-inner">
+                            <span class="word-slot-letter">${letter.toUpperCase()}</span>
+                            <div class="word-slot-braille">${miniDots}</div>
+                            ${badge}
+                        </div>
                     </div>
                 `;
             });
@@ -2436,7 +2437,7 @@ function createMemoryGame(dependencies) {
             this.wordsSelectedDots = [];
             const wordsCell = document.getElementById('words-braille-input');
             if (wordsCell) {
-                wordsCell.querySelectorAll('.braille-lesson-dot').forEach(dot => {
+                wordsCell.querySelectorAll('.words-dot').forEach(dot => {
                     dot.classList.remove('filled');
                 });
             }
