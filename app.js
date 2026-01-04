@@ -2149,6 +2149,7 @@ function createMemoryGame(dependencies) {
         next() {
             clearTimeout(this.animationTimeout);
             this.isAnimationRunning = false;
+            AudioService.stop(); // Stop any playing audio
             this.clearDots(); // Clear dots immediately when advancing
             this.currentLetterIdx++;
             this.playNextLetter();
