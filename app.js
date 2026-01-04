@@ -2166,6 +2166,7 @@ function createMemoryGame(dependencies) {
         skip() {
             clearTimeout(this.animationTimeout);
             this.isAnimationRunning = false;
+            AudioService.stop(); // Stop any playing audio
             this.finish();
         },
 
@@ -3080,6 +3081,7 @@ function createMemoryGame(dependencies) {
         },
 
         exitGame() {
+            AudioService.stop(); // Stop any playing audio
             navigateTo('dashboard-screen');
             updateDashboard();
         }
@@ -4560,6 +4562,7 @@ function createMemoryGame(dependencies) {
 
         document.getElementById('game-exit-btn')?.addEventListener('click', exitHandler);
         document.getElementById('pick-exit-btn')?.addEventListener('click', exitHandler);
+        document.getElementById('instruction-skip-btn')?.addEventListener('click', exitHandler);
 
         document.getElementById('feedback-continue-btn')?.addEventListener('click', () => {
             GameEngine.hideFeedback();
