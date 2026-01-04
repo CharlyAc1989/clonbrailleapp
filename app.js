@@ -2315,12 +2315,14 @@ function createMemoryGame(dependencies) {
             });
 
             // Start instruction phase first if this is a lesson and intro not skipped
+            // Set currentLevel BEFORE starting instruction so retry works correctly
+            this.currentLevel = level;
+
             if (level.id !== 'daily' && level.id !== 'practice' && !skipIntro) {
                 InstructionEngine.startLesson(level, { reason: 'start-level' });
                 return;
             }
 
-            this.currentLevel = level;
             this.currentRound = 0;
             this.totalRounds = level.rounds;
             this.score = 0;
