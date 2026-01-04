@@ -3362,6 +3362,10 @@ function createMemoryGame(dependencies) {
             `;
 
             chapter.levels.forEach((level, levelIndex) => {
+                // ===== DEV MODE: Set to true to unlock all levels =====
+                const DEV_MODE = true;
+                // =====================================================
+
                 const hasEnoughXP = state.progress.totalXP >= level.requiredXP && !level.isPremium;
                 const isCompleted = state.progress.levelsCompleted.includes(level.id);
                 const stars = state.progress.levelStars[level.id] || 0;
@@ -3371,7 +3375,8 @@ function createMemoryGame(dependencies) {
                 const previousCompleted = !previousLevel || state.progress.levelsCompleted.includes(previousLevel.id);
 
                 // Level is truly unlocked only if has enough XP AND previous level is completed
-                const isUnlocked = hasEnoughXP && previousCompleted;
+                // DEV_MODE bypasses this check
+                const isUnlocked = DEV_MODE || (hasEnoughXP && previousCompleted);
 
                 // This is the current level if it's unlocked but not completed
                 const isCurrent = isUnlocked && !isCompleted;
