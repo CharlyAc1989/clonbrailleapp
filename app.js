@@ -3439,7 +3439,9 @@ function createMemoryGame(dependencies) {
                     return;
                 }
 
-                if (level.isPremium) {
+                // DEV_MODE bypasses premium check
+                const DEV_MODE = true;
+                if (level.isPremium && !DEV_MODE) {
                     AudioService.speak('Este es contenido premium. Mejora para acceder.');
                     return;
                 }
