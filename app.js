@@ -2604,8 +2604,8 @@ function createMemoryGame(dependencies) {
                 const introText = level.description;
                 AudioService.speak(introText);
 
-                // Calculate delay for intro to finish (roughly 100ms per character)
-                const introDelay = Math.min(introText.length * 60, 5000);
+                // Calculate delay for intro to finish (roughly 120ms per character, max 8 seconds)
+                const introDelay = Math.min(introText.length * 120, 8000);
 
                 // Animate dots sequentially AFTER intro finishes
                 dotsToShow.forEach((dotNum, index) => {
