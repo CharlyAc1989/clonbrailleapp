@@ -1267,6 +1267,83 @@
             </div>
         </section>
 
+        <!-- Word Builder Game Screen -->
+        <section id="game-words-screen" class="screen lesson-screen-new lesson-shell" role="main"
+            aria-label="Juego Constructor de Palabras">
+            <!-- Background decorations -->
+            <div class="pick-bg-pattern"></div>
+            <div class="pick-bg-glow"></div>
+
+            <!-- Header -->
+            <header class="lesson-header-new">
+                <button id="words-exit-btn" class="lesson-close-btn" aria-label="Cerrar juego">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+                <div class="lesson-progress-bar-container">
+                    <div id="words-progress-fill" class="lesson-progress-bar-fill" style="width: 0%">
+                        <div class="lesson-progress-shine"></div>
+                    </div>
+                    <span id="words-progress-text" class="sr-only">0%</span>
+                </div>
+                <button class="lesson-audio-toggle" aria-label="Toggle audio">
+                    <span class="material-symbols-outlined">volume_up</span>
+                </button>
+            </header>
+
+            <!-- Main Content -->
+            <main class="lesson-main-content">
+                <div class="lesson-content-area">
+                    <!-- Word Title -->
+                    <div class="words-title-row">
+                        <h2 id="words-game-title">Palabras: Nivel 1</h2>
+                    </div>
+
+                    <!-- Word Slots Display -->
+                    <div class="words-slots-container" id="words-slots-container">
+                        <!-- Generated dynamically -->
+                    </div>
+
+                    <!-- Instruction -->
+                    <div class="words-instruction">
+                        <span>Forma la letra</span>
+                        <span id="words-target-letter" class="words-target-letter">'A'</span>
+                    </div>
+
+                    <!-- Braille Cell -->
+                    <div class="lesson-braille-container">
+                        <div class="lesson-braille-cell-single" id="words-cell-container">
+                            <div class="braille-lesson-cell" id="words-braille-input">
+                                <button class="braille-lesson-dot dot-btn" data-dot="1" aria-label="Punto 1">1</button>
+                                <button class="braille-lesson-dot dot-btn" data-dot="4" aria-label="Punto 4">4</button>
+                                <button class="braille-lesson-dot dot-btn" data-dot="2" aria-label="Punto 2">2</button>
+                                <button class="braille-lesson-dot dot-btn" data-dot="5" aria-label="Punto 5">5</button>
+                                <button class="braille-lesson-dot dot-btn" data-dot="3" aria-label="Punto 3">3</button>
+                                <button class="braille-lesson-dot dot-btn" data-dot="6" aria-label="Punto 6">6</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Footer -->
+            <footer class="lesson-footer-new">
+                <button id="words-check-btn" class="lesson-btn-primary">
+                    COMPROBAR
+                    <span class="material-symbols-outlined">check_circle</span>
+                </button>
+            </footer>
+
+            <!-- Feedback Overlay -->
+            <div id="words-feedback-overlay" class="feedback-overlay hidden" role="alertdialog" aria-modal="true">
+                <div class="feedback-content">
+                    <div id="words-feedback-icon" class="feedback-icon" aria-hidden="true">✓</div>
+                    <h2 id="words-feedback-title">¡Correcto!</h2>
+                    <p id="words-feedback-message">¡Muy bien!</p>
+                    <button id="words-feedback-continue-btn" class="btn btn-primary">Continuar</button>
+                </div>
+            </div>
+        </section>
+
         <!-- Pick Cell Game Screen - New Design -->
         <section id="game-pick-screen" class="screen pick-screen-new lesson-shell" role="main"
             aria-label="Juego Elige la Celda Correcta">

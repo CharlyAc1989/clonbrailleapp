@@ -2368,6 +2368,78 @@ function createMemoryGame(dependencies) {
         setupWordsGame() {
             this.currentWordIndex = 0;
             this.currentLetterInWord = 0;
+            this.wordsSelectedDots = [];
+
+            // Setup dot click handlers for words game
+            const wordsCell = document.getElementById('words-braille-input');
+            if (wordsCell) {
+                wordsCell.querySelectorAll('.braille-lesson-dot').forEach(dot => {
+                    dot.classList.remove('filled');
+                    dot.onclick = () => {
+                        const dotNum = parseInt(dot.dataset.dot);
+                        dot.classList.toggle('filled');
+
+                        if (dot.classList.contains('filled')) {
+                            if (!this.wordsSelectedDots.includes(dotNum)) {
+                                this.wordsSelectedDots.push(dotNum);
+                            }
+                            AudioService.speak(`Punto ${dotNum}`);
+                        } else {
+                            this.wordsSelectedDots = this.wordsSelectedDots.filter(d => d !== dotNum);
+                        }
+                    };
+                });
+            }
+        },
+
+        // Render word slots UI
+        renderWordSlots(word, currentLetterIndex) {
+            const container = document.getElementById('words-slots-container');
+            if (!container) return;
+
+            // Handle spaces in phrases
+            const letters = word.replace(/\s/g, '').split('');
+
+            let html = '';
+            letters.forEach((letter, index) => {
+                let stateClass = 'upcoming';
+                let checkmark = '';
+
+                if (index < currentLetterIndex) {
+                    stateClass = 'completed';
+                    checkmark = '<span class="word-slot-check">✓</span>';
+                } else if (index === currentLetterIndex) {
+                    stateClass = 'current';
+                }
+
+                // Get braille pattern for mini display
+                const pattern = BrailleData.ALPHABET[letter.toLowerCase()] || [];
+                const miniDots = [1, 4, 2, 5, 3, 6].map(d =>
+                    `<span class="mini-dot ${pattern.includes(d) ? 'filled' : ''}"></span>`
+                ).join('');
+
+                html += `
+                    <div class="word-slot ${stateClass}">
+                        ${checkmark}
+                        <span class="word-slot-letter">${letter.toUpperCase()}</span>
+                        <div class="word-slot-braille">${miniDots}</div>
+                        ${index === currentLetterIndex ? '<span class="word-slot-label">ACTUAL</span>' : ''}
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        },
+
+        // Clear words game dots
+        clearWordsDots() {
+            this.wordsSelectedDots = [];
+            const wordsCell = document.getElementById('words-braille-input');
+            if (wordsCell) {
+                wordsCell.querySelectorAll('.braille-lesson-dot').forEach(dot => {
+                    dot.classList.remove('filled');
+                });
+            }
         },
 
         generateQuestions(level) {
@@ -2651,37 +2723,42 @@ function createMemoryGame(dependencies) {
                 // Update progress
                 document.getElementById('lesson-progress-bar').style.width = `${progress}%`;
             } else if (type === 'words') {
-                // WORDS: Build words letter by letter using build screen
-                navigateTo('game-build-screen');
-                document.getElementById('game-progress-fill').style.width = `${progress}%`;
-                document.getElementById('game-progress-text').textContent = `${this.currentRound} / ${this.totalRounds}`;
+                // WORDS: Build words letter by letter using dedicated words screen
+                navigateTo('game-words-screen');
 
-                // For words, show the word and build first letter
-                const word = question.word;
-                const firstLetter = word[0].toLowerCase();
+                const word = question.word.replace(/\s/g, ''); // Remove spaces
 
-                // Get dots for first letter
-                let dots = BrailleData.BRAILLE_ALPHABET[firstLetter] ||
-                    BrailleData.BRAILLE_ACCENTS[firstLetter] ||
-                    BrailleData.BRAILLE_SYMBOLS[firstLetter];
+                // Initialize letter tracking for this word
+                if (!this.currentLetterInWord) this.currentLetterInWord = 0;
 
-                // Create a question format compatible with build checking
-                question.char = firstLetter;
-                question.cells = [{ name: `Letra ${firstLetter}`, dots: dots }];
+                const currentLetter = word[this.currentLetterInWord];
+                const letterProgress = ((this.currentLetterInWord + 1) / word.length) * 100;
 
-                const buildTargetLetter = document.getElementById('build-target-letter');
-                if (buildTargetLetter) {
-                    buildTargetLetter.textContent = firstLetter.toUpperCase();
-                    buildTargetLetter.setAttribute('aria-label', `Palabra: ${word}, letra: ${firstLetter}`);
-                }
+                // Update progress bar (combined word + letter progress)
+                const overallProgress = ((this.currentRound - 1) / this.totalRounds) * 100 +
+                    (letterProgress / this.totalRounds);
+                document.getElementById('words-progress-fill').style.width = `${Math.min(overallProgress, 100)}%`;
 
-                const buildMsgEl = document.getElementById('build-game-message');
-                if (buildMsgEl) {
-                    buildMsgEl.textContent = `Construye la palabra "${word}" - letra por letra`;
-                }
+                // Update title
+                const titleEl = document.getElementById('words-game-title');
+                if (titleEl) titleEl.textContent = `Palabra: ${question.word.toUpperCase()}`;
+
+                // Render word slots
+                this.renderWordSlots(word, this.currentLetterInWord);
+
+                // Update target letter instruction
+                const targetEl = document.getElementById('words-target-letter');
+                if (targetEl) targetEl.textContent = `'${currentLetter.toUpperCase()}'`;
+
+                // Clear previous dots
+                this.clearWordsDots();
+
+                // Store current target for validation
+                this.currentWordsTarget = currentLetter.toLowerCase();
+                this.currentWord = word;
 
                 if (state.settings.screenReader) {
-                    AudioService.speak(`Construye la palabra ${word}. Primero la letra ${firstLetter}`);
+                    AudioService.speak(`Palabra: ${question.word}. Forma la letra ${currentLetter}`);
                 }
             }
         },
@@ -2879,6 +2956,99 @@ function createMemoryGame(dependencies) {
             } else {
                 this.handleIncorrect(question.char);
                 this.showFeedback(false, question.char);
+            }
+        },
+
+        // Check answer for words game
+        checkWordsAnswer() {
+            const targetLetter = this.currentWordsTarget;
+            const userDots = this.wordsSelectedDots.sort((a, b) => a - b);
+
+            // Get expected dots for this letter
+            const expectedDots = BrailleData.ALPHABET[targetLetter] ||
+                BrailleData.ACCENTS[targetLetter] ||
+                BrailleData.SYMBOLS[targetLetter] || [];
+
+            const isCorrect = BrailleData.dotsMatch(userDots, expectedDots);
+
+            // Show feedback in words screen overlay
+            const overlay = document.getElementById('words-feedback-overlay');
+            const icon = document.getElementById('words-feedback-icon');
+            const title = document.getElementById('words-feedback-title');
+            const message = document.getElementById('words-feedback-message');
+
+            if (isCorrect) {
+                this.correctAnswers++;
+                this.score += 100;
+
+                AudioService.playSound('correct');
+                HapticService.success();
+
+                if (icon) icon.textContent = '✓';
+                if (icon) icon.style.color = 'var(--color-success)';
+                if (title) title.textContent = '¡Correcto!';
+                if (message) message.textContent = `'${targetLetter.toUpperCase()}' es correcto`;
+            } else {
+                AudioService.playSound('incorrect');
+                HapticService.error();
+
+                const desc = BrailleData.getDotsDescription(targetLetter);
+
+                if (icon) icon.textContent = '✗';
+                if (icon) icon.style.color = 'var(--color-error)';
+                if (title) title.textContent = 'Incorrecto';
+                if (message) message.textContent = `${targetLetter.toUpperCase()} es: ${desc}`;
+            }
+
+            if (overlay) overlay.classList.remove('hidden');
+
+            // Store result for advancing
+            this.lastWordsAnswerCorrect = isCorrect;
+        },
+
+        // Advance to next letter or word
+        advanceWordsGame() {
+            if (this.lastWordsAnswerCorrect) {
+                // Move to next letter in word
+                this.currentLetterInWord++;
+
+                // Check if word is complete
+                if (this.currentLetterInWord >= this.currentWord.length) {
+                    // Word complete, move to next word
+                    this.currentLetterInWord = 0;
+                    this.nextRound();
+                } else {
+                    // Re-render with next letter
+                    const question = this.questions[this.currentRound - 1];
+                    const word = question.word.replace(/\s/g, '');
+                    const currentLetter = word[this.currentLetterInWord];
+
+                    // Update slots
+                    this.renderWordSlots(word, this.currentLetterInWord);
+
+                    // Update target
+                    const targetEl = document.getElementById('words-target-letter');
+                    if (targetEl) targetEl.textContent = `'${currentLetter.toUpperCase()}'`;
+
+                    // Clear dots
+                    this.clearWordsDots();
+
+                    // Update target
+                    this.currentWordsTarget = currentLetter.toLowerCase();
+
+                    // Update progress
+                    const letterProgress = ((this.currentLetterInWord + 1) / word.length) * 100;
+                    const overallProgress = ((this.currentRound - 1) / this.totalRounds) * 100 +
+                        (letterProgress / this.totalRounds);
+                    document.getElementById('words-progress-fill').style.width = `${Math.min(overallProgress, 100)}%`;
+
+                    if (state.settings.screenReader) {
+                        AudioService.speak(`Ahora forma la letra ${currentLetter}`);
+                    }
+                }
+            } else {
+                // Wrong answer - just clear and let them try again
+                this.clearWordsDots();
             }
         },
 
@@ -4556,6 +4726,21 @@ function createMemoryGame(dependencies) {
 
         document.getElementById('pick-check-btn')?.addEventListener('click', () => {
             GameEngine.checkPickAnswer();
+        });
+
+        // Words Game Controls
+        document.getElementById('words-check-btn')?.addEventListener('click', () => {
+            GameEngine.checkWordsAnswer();
+        });
+
+        document.getElementById('words-exit-btn')?.addEventListener('click', () => {
+            document.getElementById('exit-confirm-overlay')?.classList.remove('hidden');
+        });
+
+        document.getElementById('words-feedback-continue-btn')?.addEventListener('click', () => {
+            document.getElementById('words-feedback-overlay')?.classList.add('hidden');
+            // Move to next letter or next word
+            GameEngine.advanceWordsGame();
         });
 
         document.getElementById('play-audio-btn')?.addEventListener('click', () => {

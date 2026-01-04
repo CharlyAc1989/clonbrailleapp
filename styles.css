@@ -10231,3 +10231,143 @@ textarea,
     box-shadow: none;
     cursor: not-allowed;
 }
+/* ================================
+   Word Builder Game Styles
+   ================================ */
+
+.words-title-row {
+    text-align: center;
+    margin-bottom: var(--space-md);
+}
+
+.words-title-row h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+}
+
+/* Word Slots Container */
+.words-slots-container {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: var(--space-lg);
+    padding: 0 var(--space-sm);
+    flex-wrap: wrap;
+}
+
+/* Individual Word Slot */
+.word-slot {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.5rem;
+    min-width: 60px;
+    background: #fff;
+    border-radius: 12px;
+    border: 2px solid #e5e7eb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
+}
+
+.word-slot.current {
+    border-color: var(--color-accent-primary);
+    box-shadow: 0 4px 12px rgba(255, 144, 69, 0.3);
+    transform: scale(1.05);
+}
+
+.word-slot.completed {
+    background: #f0fdf4;
+    border-color: var(--color-success);
+}
+
+.word-slot.upcoming {
+    opacity: 0.5;
+}
+
+/* Letter in Slot */
+.word-slot-letter {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    text-transform: uppercase;
+    line-height: 1;
+}
+
+.word-slot.current .word-slot-letter {
+    color: var(--color-accent-primary);
+}
+
+.word-slot.completed .word-slot-letter {
+    color: var(--color-success);
+}
+
+/* Mini Braille Pattern in Slot */
+.word-slot-braille {
+    display: grid;
+    grid-template-columns: repeat(2, 6px);
+    gap: 2px;
+    margin-top: 4px;
+}
+
+.word-slot-braille .mini-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #e5e7eb;
+}
+
+.word-slot-braille .mini-dot.filled {
+    background: var(--color-accent-primary);
+}
+
+.word-slot.completed .word-slot-braille .mini-dot.filled {
+    background: var(--color-success);
+}
+
+/* Current Label */
+.word-slot-label {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.625rem;
+    font-weight: 700;
+    color: var(--color-accent-primary);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/* Instruction */
+.words-instruction {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: var(--space-lg);
+    font-size: 1.1rem;
+    color: var(--color-text-secondary);
+}
+
+.words-target-letter {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-accent-primary);
+}
+
+/* Checkmark for completed slots */
+.word-slot-check {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    background: var(--color-success);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 12px;
+}
